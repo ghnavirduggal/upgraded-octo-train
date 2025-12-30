@@ -575,7 +575,7 @@ def _prophet_param_grid(include_holidays: bool) -> list[dict]:
                                         "holidays_prior_scale": hp,
                                     }
                                 )
-    max_candidates = 60
+    max_candidates = 10
     if len(combos) > max_candidates:
         rng = np.random.RandomState(42)
         idx = rng.choice(len(combos), size=max_candidates, replace=False)
@@ -781,7 +781,9 @@ def _phase1_compact_from_results(res: dict) -> dict:
 
 
 @app.callback(Output("global-loading", "data", allow_duplicate=True), Input("vs-upload", "contents"), prevent_initial_call=True)
-def _vs_upload_show_loader(_contents):
+def _vs_upload_show_loader(contents):
+    if not contents:
+        raise dash.exceptions.PreventUpdate
     logger.info("vs-upload: show loader")
     return True
 
@@ -935,7 +937,9 @@ def _vs_phase2_hide_loader(_status, _store):
     Input("sa-run-prophet", "n_clicks"),
     prevent_initial_call=True,
 )
-def _sa_show_loader(*_):
+def _sa_show_loader(n_smoothing, n_prophet):
+    if not (n_smoothing or n_prophet):
+        raise dash.exceptions.PreventUpdate
     return True
 
 
@@ -951,7 +955,9 @@ def _sa_hide_loader(_msg):
     Input("fc-load-saved-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def _fc_show_loader(*_):
+def _fc_show_loader(n_run, n_phase1, n_saved):
+    if not (n_run or n_phase1 or n_saved):
+        raise dash.exceptions.PreventUpdate
     return True
 
 
@@ -966,7 +972,9 @@ def _fc_hide_loader(_msg):
     Input("tp-apply-transform", "n_clicks"),
     prevent_initial_call=True,
 )
-def _tp_show_loader(*_):
+def _tp_show_loader(n_select, n_transform):
+    if not (n_select or n_transform):
+        raise dash.exceptions.PreventUpdate
     return True
 
 
@@ -981,7 +989,9 @@ def _tp_hide_loader(*_):
 
 
 @app.callback(Output("global-loading", "data", allow_duplicate=True), Input("di-run-btn", "n_clicks"), prevent_initial_call=True)
-def _di_show_loader(_n):
+def _di_show_loader(n_clicks):
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
     return True
 
 
