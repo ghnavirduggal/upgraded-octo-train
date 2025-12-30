@@ -51,6 +51,7 @@ if not logging.getLogger().handlers:
 logger.setLevel(logging.INFO)
 
 _FORECAST_STORE_IDS = [
+    "forecast-phase-store",
     "vs-data-store",
     "vs-results-store",
     "vs-iq-store",
@@ -4548,7 +4549,19 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
     available_cols = [c for c in transpose_cols if c in processed.columns]
     transposed = pd.DataFrame()
     if available_cols:
-        transposed = processed[available_cols].copy()
+        transposed_source = processed.copy()
+        if "Month_Year" in transposed_source.columns:
+            month_dt = pd.to_datetime(transposed_source["Month_Year"], format="%b-%y", errors="coerce")
+            if month_dt.isna().all():
+                month_dt = pd.to_datetime(transposed_source["Month_Year"], errors="coerce")
+            if month_dt.notna().any():
+                transposed_source = transposed_source.assign(_month_year_dt=month_dt).sort_values("_month_year_dt")
+            elif "Year" in transposed_source.columns and "Month" in transposed_source.columns:
+                transposed_source = _sort_year_month(transposed_source)
+            transposed_source = transposed_source.drop(columns=["_month_year_dt"], errors="ignore")
+        elif "Year" in transposed_source.columns and "Month" in transposed_source.columns:
+            transposed_source = _sort_year_month(transposed_source)
+        transposed = transposed_source[available_cols].copy()
         if "Month_Year" in transposed.columns:
             t = transposed.set_index("Month_Year").transpose().reset_index()
             t.rename(columns={"index": "Category"}, inplace=True)
@@ -4572,6 +4585,19 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
 
     # summary
     summary = {}
+    def _json_safe(val: Any):
+        if isinstance(val, np.generic):
+            return val.item()
+        if isinstance(val, pd.Timestamp):
+            return val.isoformat()
+        if isinstance(val, pd.Timedelta):
+            return val.isoformat()
+        if isinstance(val, dict):
+            return {k: _json_safe(v) for k, v in val.items()}
+        if isinstance(val, (list, tuple)):
+            return [_json_safe(v) for v in val]
+        return val
+
     try:
         summary = {
             "Forecast Group": processed["forecast_group"].iloc[0] if "forecast_group" in processed.columns else None,
@@ -4592,7 +4618,7 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
         _cols(transposed),
         final_tbl.to_dict("records"),
         _cols(final_tbl),
-        json.dumps(summary, indent=2),
+        json.dumps(_json_safe(summary), indent=2),
     )
 
 
