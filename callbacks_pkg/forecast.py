@@ -2754,9 +2754,9 @@ def _run_phase2_from_volume(
         def _pick_latest(group: pd.DataFrame) -> pd.Series:
             year_numeric = group["Year_Numeric"]
             if year_numeric.notna().any():
-                row = group.loc[year_numeric.idxmax()]
+                row = group.loc[year_numeric.idxmax()].copy()
             else:
-                row = group.iloc[-1]
+                row = group.iloc[-1].copy()
             if "forecast_group" not in row.index:
                 row["forecast_group"] = group.name
             return row
@@ -3038,6 +3038,27 @@ def _save_adjusted_to_db(n_clicks, adjusted_json, category):
         f"_{ts}_{_safe_filename_part(user, 'user')}.csv"
     )
     download_data = dcc.send_data_frame(df.to_csv, filename, index=False)
+    save_notice = ""
+    try:
+        repo_root = Path(__file__).resolve().parent.parent
+        base_dir = repo_root / "exports"
+        base_dir_txt = repo_root / "latest_forecast_base_dir.txt"
+        if base_dir_txt.exists():
+            try:
+                base_dir_val = base_dir_txt.read_text().strip()
+                if base_dir_val:
+                    base_dir = Path(base_dir_val)
+            except Exception:
+                base_dir = base_dir
+        base_dir.mkdir(parents=True, exist_ok=True)
+        file_path = base_dir / filename
+        df.to_csv(file_path, index=False)
+        (repo_root / "latest_forecast_full_path.txt").write_text(str(file_path))
+        (repo_root / "latest_forecast_base_dir.txt").write_text(str(base_dir))
+        (repo_root / "latest_forecast_path.txt").write_text(filename)
+        save_notice = f" Saved locally to {file_path}."
+    except Exception as exc:
+        save_notice = f" Local save failed: {exc}"
     scope_key = "forecast|workspace|global|"
     metadata = {
         "source": "volume-summary-phase2",
@@ -3053,9 +3074,13 @@ def _save_adjusted_to_db(n_clicks, adjusted_json, category):
             pushed_to_planning=False,
         )
         status = f"Saved forecast run #{run_id} by {user}. Downloading {filename}."
+        if save_notice:
+            status = f"{status}{save_notice}"
         return status, download_data, shown_style
     except Exception as exc:
         status = f"Download ready ({filename}). DB save failed: {exc}"
+        if save_notice:
+            status = f"{status}{save_notice}"
         return status, download_data, shown_style
 
 
@@ -4063,16 +4088,84 @@ def _select_saved_run(cell, rows):
 
 
 def _load_latest_forecast_file() -> tuple[pd.DataFrame, str]:
-    txt_path = Path(__file__).resolve().parent.parent / "latest_forecast_full_path.txt"
-    if txt_path.exists():
+    repo_root = Path(__file__).resolve().parent.parent
+    full_path_txt = repo_root / "latest_forecast_full_path.txt"
+    base_dir_txt = repo_root / "latest_forecast_base_dir.txt"
+    short_path_txt = repo_root / "latest_forecast_path.txt"
+
+    def _latest_in_dir(dir_path: Path) -> Optional[Path]:
+        if not dir_path.exists():
+            return None
+        patterns = [
+            "Monthly_Forecast_*.csv",
+            "adjusted_forecast_by_group*.csv",
+            "Monthly_Forecast_with_Adjustments_*.csv",
+        ]
+        candidates = []
+        for pattern in patterns:
+            candidates.extend(dir_path.glob(pattern))
+        if not candidates:
+            return None
         try:
-            file_path = txt_path.read_text().strip()
-            if file_path and Path(file_path).exists():
-                df = pd.read_csv(file_path)
-                return df, f"Loaded {Path(file_path).name}."
-            return pd.DataFrame(), f"File not found: {file_path}"
-        except Exception as exc:
-            return pd.DataFrame(), f"Could not load latest forecast: {exc}"
+            return max(candidates, key=lambda p: p.stat().st_mtime)
+        except Exception:
+            return None
+
+    try:
+        if full_path_txt.exists():
+            file_path = full_path_txt.read_text().strip()
+            if file_path:
+                path = Path(file_path)
+                if path.exists():
+                    df = pd.read_csv(path)
+                    return df, f"Loaded {path.name}."
+                return pd.DataFrame(), f"File not found: {file_path}"
+    except Exception as exc:
+        return pd.DataFrame(), f"Could not load latest forecast: {exc}"
+
+    if short_path_txt.exists():
+        try:
+            filename = short_path_txt.read_text().strip()
+        except Exception:
+            filename = ""
+        if filename:
+            base_dir = None
+            if base_dir_txt.exists():
+                try:
+                    base_dir_val = base_dir_txt.read_text().strip()
+                    base_dir = Path(base_dir_val) if base_dir_val else None
+                except Exception:
+                    base_dir = None
+            for root in [base_dir, repo_root / "exports", repo_root]:
+                if root and root.exists():
+                    candidate = root / filename
+                    if candidate.exists():
+                        try:
+                            df = pd.read_csv(candidate)
+                            return df, f"Loaded {candidate.name}."
+                        except Exception as exc:
+                            return pd.DataFrame(), f"Could not load latest forecast: {exc}"
+
+    base_dir = None
+    if base_dir_txt.exists():
+        try:
+            base_dir_val = base_dir_txt.read_text().strip()
+            if base_dir_val:
+                base_dir = Path(base_dir_val)
+        except Exception:
+            base_dir = None
+
+    for root in [base_dir, repo_root / "exports", repo_root]:
+        if not root:
+            continue
+        latest = _latest_in_dir(root)
+        if latest is not None:
+            try:
+                df = pd.read_csv(latest)
+                return df, f"Loaded {latest.name}."
+            except Exception as exc:
+                return pd.DataFrame(), f"Could not load latest forecast: {exc}"
+
     return pd.DataFrame(), "No latest forecast path found."
 
 
@@ -4081,6 +4174,77 @@ def _options_from_df(df: pd.DataFrame, col: str):
         return []
     vals = sorted(pd.unique(df[col].dropna()).tolist())
     return [{"label": str(v), "value": v} for v in vals]
+
+
+def _saved_forecast_options(limit: int = 100) -> tuple[list[dict], Optional[int], str]:
+    try:
+        df = cap_store.list_forecast_runs(limit=limit)
+    except Exception as exc:
+        return [], None, f"Could not load saved forecasts: {exc}"
+    if df is None or df.empty:
+        return [], None, "No saved forecasts found."
+    options = []
+    for _, row in df.iterrows():
+        run_id = row.get("id")
+        created_at = row.get("created_at")
+        model_name = row.get("model_name") or "forecast"
+        created_by = row.get("created_by") or "unknown"
+        parts = [f"#{run_id}", model_name, created_by]
+        if created_at:
+            parts.append(str(created_at))
+        label = " | ".join(str(p) for p in parts if p)
+        options.append({"label": label, "value": int(run_id) if pd.notna(run_id) else run_id})
+    value = options[0]["value"] if options else None
+    return options, value, f"Loaded {len(options)} saved forecasts."
+
+
+def _load_saved_forecast(run_id: Any) -> tuple[pd.DataFrame, str]:
+    if not run_id:
+        return pd.DataFrame(), "Select a saved forecast."
+    try:
+        meta, df = cap_store.load_forecast_run(int(run_id))
+    except Exception as exc:
+        return pd.DataFrame(), f"Could not load saved forecast: {exc}"
+    if df is None or df.empty:
+        return pd.DataFrame(), f"Saved forecast #{run_id} is empty."
+    label = f"Loaded saved forecast #{run_id}."
+    if isinstance(meta, dict):
+        parts = []
+        if meta.get("model_name"):
+            parts.append(str(meta["model_name"]))
+        if meta.get("created_by"):
+            parts.append(str(meta["created_by"]))
+        if meta.get("created_at"):
+            parts.append(str(meta["created_at"]))
+        if parts:
+            label = f"{label} ({' | '.join(parts)})"
+    return df, label
+
+
+@app.callback(
+    Output("tp-saved-run", "options"),
+    Output("tp-saved-run", "value"),
+    Output("tp-saved-status", "children"),
+    Input("tp-refresh-saved", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _tp_refresh_saved_runs(n):
+    if not n:
+        raise dash.exceptions.PreventUpdate
+    return _saved_forecast_options()
+
+
+@app.callback(
+    Output("di-saved-run", "options"),
+    Output("di-saved-run", "value"),
+    Output("di-saved-status", "children"),
+    Input("di-refresh-saved", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _di_refresh_saved_runs(n):
+    if not n:
+        raise dash.exceptions.PreventUpdate
+    return _saved_forecast_options()
 
 
 @app.callback(
@@ -4093,43 +4257,127 @@ def _options_from_df(df: pd.DataFrame, col: str):
     Output("tp-raw-table", "columns"),
     Input("tp-load-latest", "n_clicks"),
     Input("tp-use-phase", "n_clicks"),
+    Input("tp-load-saved", "n_clicks"),
     State("fc-data-store", "data"),
+    State("vs-adjusted-store", "data"),
+    State("vs-phase2-store", "data"),
+    State("tp-saved-run", "value"),
     prevent_initial_call=True,
 )
-def _tp_load_source(n_file, n_phase, fc_store_json):
-    if not n_file and not n_phase:
+def _tp_load_source(
+    n_file,
+    n_phase,
+    n_saved,
+    fc_store_json,
+    adjusted_json,
+    phase2_store,
+    saved_run_id,
+):
+    if not n_file and not n_phase and not n_saved:
         raise dash.exceptions.PreventUpdate
     ctx = dash.callback_context
     trig = ctx.triggered_id if ctx.triggered_id else "tp-load-latest"
 
     df = pd.DataFrame()
     msg = ""
+    def _ensure_month_fields(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in.empty:
+            return df_in
+        df_out = df_in.copy()
+        if "Month_Year" not in df_out.columns:
+            if "ds" in df_out.columns:
+                ds = pd.to_datetime(df_out["ds"], errors="coerce")
+                df_out["Month_Year"] = ds.dt.strftime("%b-%y")
+            elif "Month" in df_out.columns and "Year" in df_out.columns:
+                dt = pd.to_datetime(
+                    df_out["Month"].astype(str) + " " + df_out["Year"].astype(str),
+                    errors="coerce",
+                )
+                df_out["Month_Year"] = dt.dt.strftime("%b-%y")
+        if "Year" not in df_out.columns or "Month" not in df_out.columns:
+            if "Month_Year" in df_out.columns:
+                dt = pd.to_datetime(df_out["Month_Year"], format="%b-%y", errors="coerce")
+                if dt.isna().all():
+                    dt = pd.to_datetime(df_out["Month_Year"], errors="coerce")
+                df_out["Year"] = dt.dt.year
+                df_out["Month"] = dt.dt.strftime("%b")
+        return df_out
+
+    def _normalize_tp_df(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in.empty:
+            return df_in
+        df_out = _ensure_month_fields(df_in)
+        if "Base_Forecast_for_Forecast_Group" not in df_out.columns:
+            if "Base_Forecast_Category" in df_out.columns:
+                df_out["Base_Forecast_for_Forecast_Group"] = df_out["Base_Forecast_Category"]
+            elif "Final_Forecast" in df_out.columns:
+                df_out["Base_Forecast_for_Forecast_Group"] = df_out["Final_Forecast"]
+            elif "Forecast" in df_out.columns:
+                df_out["Base_Forecast_for_Forecast_Group"] = df_out["Forecast"]
+        if "forecast_group" not in df_out.columns:
+            df_out["forecast_group"] = "Category"
+        return df_out
+
     if trig == "tp-load-latest":
         df, msg = _load_latest_forecast_file()
+        if not df.empty:
+            df = _normalize_tp_df(df)
     elif trig == "tp-use-phase":
-        if fc_store_json:
+        used = False
+        err_msg = ""
+
+        if adjusted_json:
+            try:
+                df = pd.read_json(io.StringIO(adjusted_json), orient="split")
+                if not df.empty:
+                    df = _normalize_tp_df(df)
+                    msg = "Loaded adjusted Phase 2 forecast (volume split applied)."
+                    used = True
+            except Exception as exc:
+                err_msg = f"Could not parse adjusted Phase 2 data: {exc}"
+
+        if not used and phase2_store:
+            try:
+                payload = json.loads(phase2_store) if isinstance(phase2_store, str) else phase2_store
+                base_json = payload.get("base_df") if isinstance(payload, dict) else None
+                if base_json:
+                    base_df = pd.read_json(io.StringIO(base_json), orient="split")
+                else:
+                    base_df = pd.DataFrame()
+                if not base_df.empty:
+                    df = _normalize_tp_df(base_df)
+                    msg = "Loaded Phase 2 base forecast (category-level). Apply volume split for forecast-group results."
+                    used = True
+                else:
+                    err_msg = "Phase 2 base forecast not found."
+            except Exception as exc:
+                err_msg = f"Could not parse Phase 2 base forecast: {exc}"
+
+        if not used and fc_store_json:
             try:
                 payload = json.loads(fc_store_json)
                 combined = pd.DataFrame(payload.get("combined", []))
                 pivot = pd.DataFrame(payload.get("pivot_smoothed", []))
                 if not combined.empty:
-                    # attempt to reconstruct Month_Year and Year/Month
-                    combined["Month_Year"] = pd.to_datetime(combined["Month"]).dt.strftime("%b-%y")
-                    combined["Year"] = pd.to_datetime(combined["Month"]).dt.year
-                    combined["Month"] = pd.to_datetime(combined["Month"]).dt.strftime("%b")
-                    combined.rename(columns={"Forecast": "Base_Forecast_for_Forecast_Group"}, inplace=True)
-                    df = combined
+                    df = _normalize_tp_df(combined)
                     msg = "Loaded from Phase 2 results."
+                    used = True
                 elif not pivot.empty:
                     pivot = pivot.copy()
                     df = pivot
                     msg = "Loaded pivot smoothed from Phase 2."
+                    used = True
                 else:
-                    msg = "No Phase 2 data available."
+                    err_msg = "No Phase 2 data available."
             except Exception as exc:
-                msg = f"Could not parse Phase 2 data: {exc}"
-        else:
-            msg = "Phase 2 results not found."
+                err_msg = f"Could not parse Phase 2 data: {exc}"
+
+        if not used:
+            msg = err_msg or "Phase 2 results not found."
+    elif trig == "tp-load-saved":
+        df, msg = _load_saved_forecast(saved_run_id)
+        if not df.empty:
+            df = _normalize_tp_df(df)
 
     opts_group = _options_from_df(df, "forecast_group")
     opts_model = _options_from_df(df, "Model")
@@ -4921,13 +5169,27 @@ def _di_update_month_options(year_val, store_json):
     Input("di-load-transform", "n_clicks"),
     Input("di-load-transform-selected", "n_clicks"),
     Input("di-upload-transform", "contents"),
+    Input("di-load-saved", "n_clicks"),
     State("di-transform-file", "value"),
     State("di-upload-transform", "filename"),
+    State("di-saved-run", "value"),
     prevent_initial_call=True,
 )
-def _di_load_transform(n_load, n_selected, contents, selected_path, filename):
+def _di_load_transform(n_load, n_selected, contents, n_saved, selected_path, filename, saved_run_id):
     ctx = dash.callback_context
     trig = ctx.triggered_id if ctx.triggered_id else None
+
+    def _ensure_month_year(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in.empty:
+            return df_in
+        df_out = df_in.copy()
+        if "Month_Year" not in df_out.columns and "Year" in df_out.columns and "Month" in df_out.columns:
+            dt = pd.to_datetime(
+                df_out["Month"].astype(str) + " " + df_out["Year"].astype(str),
+                errors="coerce",
+            )
+            df_out["Month_Year"] = dt.dt.strftime("%b-%y")
+        return df_out
 
     def _load_latest():
         base_dir_txt = Path(__file__).resolve().parent.parent / "latest_forecast_base_dir.txt"
@@ -4961,11 +5223,14 @@ def _di_load_transform(n_load, n_selected, contents, selected_path, filename):
             msg = f"Could not load selected file: {exc}"
     elif trig == "di-upload-transform" and contents and filename:
         df, msg = _parse_upload(contents, filename)
+    elif trig == "di-load-saved" and n_saved:
+        df, msg = _load_saved_forecast(saved_run_id)
     else:
         raise dash.exceptions.PreventUpdate
 
     if df is None or df.empty:
         return msg, [], [], [], None, [], None, [], None, None
+    df = _ensure_month_year(df)
 
     def _opts(colname: str):
         uniq = sorted(pd.unique(df[colname].dropna()).tolist())
