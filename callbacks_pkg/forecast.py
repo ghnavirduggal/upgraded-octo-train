@@ -50,6 +50,49 @@ if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO)
 logger.setLevel(logging.INFO)
 
+_FORECAST_STORE_IDS = [
+    "vs-data-store",
+    "vs-results-store",
+    "vs-iq-store",
+    "vs-iq-summary-store",
+    "vs-seasonality-store",
+    "vs-prophet-store",
+    "vs-holiday-store",
+    "vs-phase1-config-store",
+    "vs-phase1-download-store",
+    "vs-phase2-store",
+    "vs-adjusted-store",
+    "sa-raw-store",
+    "sa-results-store",
+    "sa-seasonality-store",
+    "fc-data-store",
+    "fc-saved-list-store",
+    "fc-saved-selected",
+    "fc-config-store",
+    "tp-raw-store",
+    "tp-filtered-store",
+    "tp-final-store",
+    "di-page-init",
+    "di-forecast-dates-store",
+    "di-holidays-store",
+    "di-transform-store",
+    "di-interval-store",
+    "di-results-store",
+    "di-distribution-store",
+]
+
+
+@app.callback(
+    [Output(store_id, "data") for store_id in _FORECAST_STORE_IDS],
+    Input("url-router", "pathname"),
+    prevent_initial_call=False,
+)
+def _clear_forecast_stores_on_nav(pathname):
+    path = (pathname or "").rstrip("/")
+    if path.startswith("/forecast"):
+        raise dash.exceptions.PreventUpdate
+    return [None] * len(_FORECAST_STORE_IDS)
+
 
 def _parse_upload(contents: str, filename: str, decoded_bytes: Optional[bytes] = None) -> Tuple[pd.DataFrame, str]:
     if not contents or "," not in contents:
@@ -382,12 +425,17 @@ def _format_ratio_wide(df: pd.DataFrame, add_avg: bool = False) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     out = df.copy()
-    value_cols = [c for c in out.columns if c != "Model"]
+    value_cols = [c for c in out.columns if c not in ("Model", "Avg")]
     if not value_cols:
         return out
     numeric = out[value_cols].apply(pd.to_numeric, errors="coerce")
     if add_avg:
-        out.insert(1, "Avg", numeric.mean(axis=1, skipna=True).round(4))
+        avg_series = numeric.mean(axis=1, skipna=True).round(4)
+        if "Avg" in out.columns:
+            out["Avg"] = avg_series
+        else:
+            insert_loc = 1 if "Model" in out.columns else 0
+            out.insert(insert_loc, "Avg", avg_series)
     for col in [c for c in out.columns if c != "Model"]:
         out[col] = pd.to_numeric(out[col], errors="coerce").apply(
             lambda v: f"{v * 100:.2f}%" if pd.notna(v) else ""
@@ -757,7 +805,7 @@ def _vs_show_loader(_n):
 
 @app.callback(
     Output("global-loading", "data", allow_duplicate=True),
-    Input("vs-alert", "children"),
+    Input("vs-alert", "children", allow_optional=True),
     Input("vs-results-store", "data"),
     prevent_initial_call=True,
 )
@@ -780,7 +828,7 @@ def _vs_prophet_show_loader(n_clicks):
 
 @app.callback(
     Output("global-loading", "data", allow_duplicate=True),
-    Input("vs-prophet-status", "children"),
+    Input("vs-prophet-status", "children", allow_optional=True),
     Input("vs-prophet-store", "data"),
     prevent_initial_call=True,
 )
@@ -803,7 +851,7 @@ def _vs_apply_seasonality_show_loader(n_clicks):
 
 @app.callback(
     Output("global-loading", "data", allow_duplicate=True),
-    Input("vs-seasonality-status", "children"),
+    Input("vs-seasonality-status", "children", allow_optional=True),
     Input("vs-seasonality-store", "data"),
     prevent_initial_call=True,
 )
@@ -826,7 +874,7 @@ def _vs_save_prophet_show_loader(n_clicks):
 
 @app.callback(
     Output("global-loading", "data", allow_duplicate=True),
-    Input("vs-prophet-save-status", "children"),
+    Input("vs-prophet-save-status", "children", allow_optional=True),
     Input("vs-prophet-store", "data"),
     prevent_initial_call=True,
 )
@@ -872,7 +920,7 @@ def _vs_phase2_show_loader(n_clicks):
 
 @app.callback(
     Output("global-loading", "data", allow_duplicate=True),
-    Input("vs-phase2-status", "children"),
+    Input("vs-phase2-status", "children", allow_optional=True),
     Input("vs-phase2-store", "data"),
     prevent_initial_call=True,
 )
@@ -1629,7 +1677,7 @@ for _btn, _modal in [
 
 @app.callback(
     Output("vs-category-heading", "children"),
-    Input("vs-category-tabs", "value"),
+    Input("vs-category-tabs", "value", allow_optional=True),
     prevent_initial_call=True,
 )
 def _update_category_heading(cat: Optional[str]):
@@ -1641,7 +1689,7 @@ def _update_category_heading(cat: Optional[str]):
 @app.callback(
     Output("vs-pivot-title", "children"),
     Output("vs-volume-split-title", "children"),
-    Input("vs-category-tabs", "value"),
+    Input("vs-category-tabs", "value", allow_optional=True),
     prevent_initial_call=True,
 )
 def _update_category_section_titles(cat: Optional[str]):
@@ -1661,7 +1709,7 @@ def _update_category_section_titles(cat: Optional[str]):
     Output("vs-volume-summary", "columns", allow_duplicate=True),
     Output("vs-contact-summary", "data", allow_duplicate=True),
     Output("vs-contact-summary", "columns", allow_duplicate=True),
-    Input("vs-category-tabs", "value"),
+    Input("vs-category-tabs", "value", allow_optional=True),
     State("vs-results-store", "data"),
     State("vs-iq-summary-store", "data"),
     prevent_initial_call=True,
@@ -1735,7 +1783,7 @@ def _on_category_change(cat, store_json, iq_summary_store):
     Output("vs-normalized-table", "columns"),
     Output("vs-seasonality-status", "children"),
     Output("vs-seasonality-store", "data"),
-    Input("vs-category-tabs", "value"),
+    Input("vs-category-tabs", "value", allow_optional=True),
     Input("vs-iq-summary-store", "data"),
     prevent_initial_call=True,
 )
@@ -2585,7 +2633,7 @@ def _run_phase2_from_volume(
         merged_df["IQ_value"] = merged_df["IQ_value"].ffill()
     merged_df["Forecast"] = pd.to_numeric(merged_df.get("Forecast"), errors="coerce")
     merged_df["Base_Forecast_Category"] = (
-        merged_df["Forecast"] * merged_df["IQ_value"] / 1_000_000
+        merged_df["Forecast"] * merged_df["IQ_value"] * 1_000_000
     ).round().astype("Int64")
     merged_df["Contact_Ratio_Forecast_Category"] = merged_df["Forecast"].apply(fmt_percent1)
     merged_df["IQ_value_Category"] = merged_df["IQ_value"].apply(fmt_millions_1)
@@ -4773,6 +4821,8 @@ def _di_build_forecasts(
     prevent_initial_call=False,
 )
 def _di_load_forecast_dates_cb(_init, _refresh):
+    if _init is None and not _refresh:
+        raise dash.exceptions.PreventUpdate
     dates, msg = _di_load_forecast_dates()
     holidays_df, holidays_msg = _di_load_holidays()
 
