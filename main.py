@@ -103,11 +103,11 @@ def _toggle_global_loading(is_on):
     prevent_initial_call=True,
 )
 def _toggle_nav_loading(_path, _children):
-    trigger = dash.callback_context.triggered_id
-    if trigger == "url-router":
-        return True
-    if trigger == "root":
+    triggered = [t["prop_id"].split(".")[0] for t in (dash.callback_context.triggered or [])]
+    if "root" in triggered:
         return False
+    if "url-router" in triggered:
+        return True
     return False
 
 # Register callbacks (planning + plan-detail)
