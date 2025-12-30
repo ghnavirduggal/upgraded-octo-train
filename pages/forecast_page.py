@@ -204,22 +204,40 @@ def page_forecast():
         )
     )
 
-def page_forecast_section(slug: str, validation_only: bool = False):
-    """Forecasting workspace wizard-style sections."""
-    shared_stores = [
-        dcc.Store(id="vs-data-store", storage_type="memory"),
-        dcc.Store(id="vs-results-store", storage_type="memory"),
-        dcc.Store(id="vs-iq-store", storage_type="memory"),
-        dcc.Store(id="vs-iq-summary-store", storage_type="memory"),
-        dcc.Store(id="vs-seasonality-store", storage_type="memory"),
-        dcc.Store(id="vs-prophet-store", storage_type="memory"),
-        dcc.Store(id="vs-holiday-store", storage_type="memory"),
-        dcc.Store(id="vs-phase1-config-store", storage_type="memory"),
-        dcc.Store(id="vs-phase1-download-store", storage_type="memory"),
-        dcc.Store(id="vs-phase2-store", storage_type="memory"),
-        dcc.Store(id="vs-adjusted-store", storage_type="memory"),
+def forecast_shared_stores(storage_type: str = "memory"):
+    return [
+        dcc.Store(id="vs-data-store", storage_type=storage_type),
+        dcc.Store(id="vs-results-store", storage_type=storage_type),
+        dcc.Store(id="vs-iq-store", storage_type=storage_type),
+        dcc.Store(id="vs-iq-summary-store", storage_type=storage_type),
+        dcc.Store(id="vs-seasonality-store", storage_type=storage_type),
+        dcc.Store(id="vs-prophet-store", storage_type=storage_type),
+        dcc.Store(id="vs-holiday-store", storage_type=storage_type),
+        dcc.Store(id="vs-phase1-config-store", storage_type=storage_type),
+        dcc.Store(id="vs-phase1-download-store", storage_type=storage_type),
+        dcc.Store(id="vs-phase2-store", storage_type=storage_type),
+        dcc.Store(id="vs-adjusted-store", storage_type=storage_type),
+        dcc.Store(id="sa-raw-store", storage_type=storage_type),
+        dcc.Store(id="sa-results-store", storage_type=storage_type),
+        dcc.Store(id="sa-seasonality-store", storage_type=storage_type),
+        dcc.Store(id="fc-data-store", storage_type=storage_type),
+        dcc.Store(id="fc-saved-list-store", storage_type=storage_type),
+        dcc.Store(id="fc-saved-selected", storage_type=storage_type),
+        dcc.Store(id="fc-config-store", storage_type=storage_type),
+        dcc.Store(id="tp-raw-store", storage_type=storage_type),
+        dcc.Store(id="tp-filtered-store", storage_type=storage_type),
+        dcc.Store(id="tp-final-store", storage_type=storage_type),
+        dcc.Store(id="di-page-init", data=0, storage_type=storage_type),
+        dcc.Store(id="di-forecast-dates-store", storage_type=storage_type),
+        dcc.Store(id="di-holidays-store", storage_type=storage_type),
+        dcc.Store(id="di-transform-store", storage_type=storage_type),
+        dcc.Store(id="di-interval-store", storage_type=storage_type),
+        dcc.Store(id="di-results-store", storage_type=storage_type),
+        dcc.Store(id="di-distribution-store", storage_type=storage_type),
     ]
 
+def page_forecast_section(slug: str, validation_only: bool = False):
+    """Forecasting workspace wizard-style sections."""
     def _stepper(active_slug: str):
         items = []
         for step in FORECAST_STEPS:
@@ -268,6 +286,16 @@ def page_forecast_section(slug: str, validation_only: bool = False):
             "padding": "4px",
             "maxHeight": "360px",
         }
+        base_cells = {
+            "fontSize": 12,
+            "padding": "6px 8px",
+            "textAlign": "left",
+            "border": "none",
+            "minWidth": "120px",
+            "width": "120px",
+            "maxWidth": "240px",
+            "whiteSpace": "nowrap",
+        }
         return dash_table.DataTable(
             id=id,
             data=[],
@@ -277,12 +305,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
             editable=editable,
             fixed_rows={"headers": True},
             style_table=base_style,
-            style_cell={
-                "fontSize": 12,
-                "padding": "6px 8px",
-                "textAlign": "left",
-                "border": "none",
-            },
+            style_cell=base_cells,
             style_header={
                 "backgroundColor": "#f8f9fa",
                 "fontWeight": "600",
@@ -534,7 +557,13 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     editable=True,
                                     fixed_rows={"headers": True},
                                     style_table={"overflowX": "auto", "maxHeight": "360px", "overflowY": "auto"},
-                                    style_cell={"fontSize": 12},
+                                    style_cell={
+                                        "fontSize": 12,
+                                        "minWidth": "120px",
+                                        "width": "120px",
+                                        "maxWidth": "240px",
+                                        "whiteSpace": "nowrap",
+                                    },
                                 ),
                                 html.Div(id="vs-volume-split-info", className="small text-muted mt-2"),
                                 dbc.Button(
@@ -587,9 +616,6 @@ def page_forecast_section(slug: str, validation_only: bool = False):
 
     def _smoothing_layout(step_meta):
         return [
-            dcc.Store(id="sa-raw-store"),
-            dcc.Store(id="sa-results-store"),
-            dcc.Store(id="sa-seasonality-store"),
             dcc.Download(id="sa-download-smoothed"),
             dcc.Download(id="sa-download-seasonality"),
             dbc.Row(
@@ -663,7 +689,13 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                             page_action="none",
                                             fixed_rows={"headers": True},
                                             style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
-                                            style_cell={"fontSize": 12},
+                                            style_cell={
+                                                "fontSize": 12,
+                                                "minWidth": "120px",
+                                                "width": "120px",
+                                                "maxWidth": "240px",
+                                                "whiteSpace": "nowrap",
+                                            },
                                         ),
                                         dash_table.DataTable(
                                             id="sa-smooth-table",
@@ -673,7 +705,13 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                             page_action="none",
                                             fixed_rows={"headers": True},
                                             style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
-                                            style_cell={"fontSize": 12},
+                                            style_cell={
+                                                "fontSize": 12,
+                                                "minWidth": "120px",
+                                                "width": "120px",
+                                                "maxWidth": "240px",
+                                                "whiteSpace": "nowrap",
+                                            },
                                         ),
                                     ],
                                 ),
@@ -695,7 +733,13 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                             page_action="none",
                                             fixed_rows={"headers": True},
                                             style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
-                                            style_cell={"fontSize": 12},
+                                            style_cell={
+                                                "fontSize": 12,
+                                                "minWidth": "120px",
+                                                "width": "120px",
+                                                "maxWidth": "240px",
+                                                "whiteSpace": "nowrap",
+                                            },
                                         ),
                                         dash_table.DataTable(
                                             id="sa-seasonality-table",
@@ -706,7 +750,13 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                             page_action="none",
                                             fixed_rows={"headers": True},
                                             style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
-                                            style_cell={"fontSize": 12},
+                                            style_cell={
+                                                "fontSize": 12,
+                                                "minWidth": "120px",
+                                                "width": "120px",
+                                                "maxWidth": "240px",
+                                                "whiteSpace": "nowrap",
+                                            },
                                         ),
                                     ],
                                 ),
@@ -722,7 +772,13 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                             page_action="none",
                                             fixed_rows={"headers": True},
                                             style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
-                                            style_cell={"fontSize": 12},
+                                            style_cell={
+                                                "fontSize": 12,
+                                                "minWidth": "120px",
+                                                "width": "120px",
+                                                "maxWidth": "240px",
+                                                "whiteSpace": "nowrap",
+                                            },
                                         ),
                                     ],
                                 ),
@@ -741,8 +797,6 @@ def page_forecast_section(slug: str, validation_only: bool = False):
             dcc.Download(id="fc-download-forecast"),
             dcc.Download(id="fc-download-config"),
             dcc.Download(id="fc-download-accuracy"),
-            dcc.Store(id="fc-saved-list-store"),
-            dcc.Store(id="fc-saved-selected"),
             dbc.Row(
                 [
                     dbc.Col(
@@ -805,7 +859,6 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                             ),
                             html.Hr(),
                             html.H5("Model configuration"),
-                            dcc.Store(id="fc-config-store"),
                             dcc.Interval(id="fc-config-loader", interval=0, n_intervals=0, max_intervals=1),
                             dbc.Accordion(
                                 [
@@ -988,14 +1041,10 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                 ],
                 className="g-3",
             ),
-            dcc.Store(id="fc-data-store"),
         ]
 
     def _transformation_layout(step_meta):
         return [
-            dcc.Store(id="tp-raw-store"),
-            dcc.Store(id="tp-filtered-store"),
-            dcc.Store(id="tp-final-store"),
             dcc.Download(id="tp-download-final"),
             dcc.Download(id="tp-download-full"),
             dbc.Row(
@@ -1157,13 +1206,6 @@ def page_forecast_section(slug: str, validation_only: bool = False):
 
     def _daily_interval_layout(step_meta):
         return [
-            dcc.Store(id="di-page-init", data=0),
-            dcc.Store(id="di-forecast-dates-store"),
-            dcc.Store(id="di-holidays-store"),
-            dcc.Store(id="di-transform-store"),
-            dcc.Store(id="di-interval-store"),
-            dcc.Store(id="di-results-store"),
-            dcc.Store(id="di-distribution-store"),
             dcc.Download(id="di-download-daily"),
             dcc.Download(id="di-download-interval"),
             dbc.Row(
@@ -1420,7 +1462,6 @@ def page_forecast_section(slug: str, validation_only: bool = False):
             dbc.Container(
                 [
                     header_bar(),
-                    *shared_stores,
                     content,
                 ],
                 fluid=True,
@@ -1516,7 +1557,6 @@ def page_forecast_section(slug: str, validation_only: bool = False):
         dbc.Container(
             [
                 header_bar(),
-                *shared_stores,
                 content,
             ],
             fluid=True,
