@@ -2744,10 +2744,18 @@ def _run_phase2_from_volume(
         def _pick_latest(group: pd.DataFrame) -> pd.Series:
             year_numeric = group["Year_Numeric"]
             if year_numeric.notna().any():
-                return group.loc[year_numeric.idxmax()]
-            return group.iloc[-1]
+                row = group.loc[year_numeric.idxmax()]
+            else:
+                row = group.iloc[-1]
+            if "forecast_group" not in row.index:
+                row["forecast_group"] = group.name
+            return row
 
-        latest_data = split_clean.groupby("forecast_group").apply(_pick_latest).reset_index(drop=True)
+        latest_data = (
+            split_clean.groupby("forecast_group")
+            .apply(_pick_latest, include_groups=False)
+            .reset_index(drop=True)
+        )
         if "Vol_Split_Last_3M" in latest_data.columns:
             latest_data["Vol_Split_Last_3M_Numeric"] = (
                 latest_data["Vol_Split_Last_3M"].astype(str).str.replace("%", "", regex=False)
