@@ -293,7 +293,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
             "border": "none",
             "minWidth": "120px",
             "width": "120px",
-            "maxWidth": "240px",
+            
             "whiteSpace": "nowrap",
         }
         return dash_table.DataTable(
@@ -561,7 +561,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                         "fontSize": 12,
                                         "minWidth": "120px",
                                         "width": "120px",
-                                        "maxWidth": "240px",
+                                        
                                         "whiteSpace": "nowrap",
                                     },
                                 ),
@@ -693,7 +693,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                                 "fontSize": 12,
                                                 "minWidth": "120px",
                                                 "width": "120px",
-                                                "maxWidth": "240px",
+                                                
                                                 "whiteSpace": "nowrap",
                                             },
                                         ),
@@ -709,7 +709,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                                 "fontSize": 12,
                                                 "minWidth": "120px",
                                                 "width": "120px",
-                                                "maxWidth": "240px",
+                                                
                                                 "whiteSpace": "nowrap",
                                             },
                                         ),
@@ -737,7 +737,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                                 "fontSize": 12,
                                                 "minWidth": "120px",
                                                 "width": "120px",
-                                                "maxWidth": "240px",
+                                                
                                                 "whiteSpace": "nowrap",
                                             },
                                         ),
@@ -754,7 +754,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                                 "fontSize": 12,
                                                 "minWidth": "120px",
                                                 "width": "120px",
-                                                "maxWidth": "240px",
+                                                
                                                 "whiteSpace": "nowrap",
                                             },
                                         ),
@@ -776,7 +776,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                                 "fontSize": 12,
                                                 "minWidth": "120px",
                                                 "width": "120px",
-                                                "maxWidth": "240px",
+                                                
                                                 "whiteSpace": "nowrap",
                                             },
                                         ),
@@ -1067,6 +1067,27 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     outline=True,
                                     className="w-100",
                                 ),
+                                dbc.Button(
+                                    "Refresh saved forecasts",
+                                    id="tp-refresh-saved",
+                                    color="secondary",
+                                    outline=True,
+                                    className="w-100 mt-2",
+                                ),
+                                dcc.Dropdown(
+                                    id="tp-saved-run",
+                                    options=[],
+                                    placeholder="Select saved forecast",
+                                    className="mt-2",
+                                ),
+                                dbc.Button(
+                                    "Load saved forecast",
+                                    id="tp-load-saved",
+                                    color="secondary",
+                                    outline=True,
+                                    className="w-100 mt-1",
+                                ),
+                                html.Div(id="tp-saved-status", className="small text-muted mt-2"),
                                 html.Div(id="tp-load-status", className="small text-muted mt-2"),
                                 html.Hr(),
                                 html.H6("Selection criteria"),
@@ -1258,6 +1279,20 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     ],
                                     className="mb-2",
                                 ),
+                                dbc.ButtonGroup(
+                                    [
+                                        dbc.Button("Refresh saved forecasts", id="di-refresh-saved", color="secondary", outline=True),
+                                        dbc.Button("Load saved forecast", id="di-load-saved", color="secondary", outline=True),
+                                    ],
+                                    className="mb-2",
+                                ),
+                                dcc.Dropdown(
+                                    id="di-saved-run",
+                                    options=[],
+                                    placeholder="Select saved forecast",
+                                    className="mb-2",
+                                ),
+                                html.Div(id="di-saved-status", className="small text-muted mb-2"),
                                 dcc.Dropdown(
                                     id="di-transform-file",
                                     options=[],
