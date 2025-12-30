@@ -1446,7 +1446,14 @@ def map_normalized_volume_to_forecast(
         smoothing_phase2_df[["Year", "Month", "Normalized_Volume"]],
         how="left",
         on=["Year", "Month"],
+        suffixes=("", "_smooth"),
     )
+
+    if "Normalized_Volume_smooth" in merged_df.columns:
+        merged_df["Normalized_Volume"] = merged_df["Normalized_Volume_smooth"].combine_first(
+            merged_df.get("Normalized_Volume")
+        )
+        merged_df = merged_df.drop(columns=["Normalized_Volume_smooth"])
 
     return merged_df
 
