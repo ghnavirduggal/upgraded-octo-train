@@ -45,12 +45,7 @@ def home_layout():
 def not_found_layout():
     return dbc.Container([header_bar(), dbc.Alert("Page not found.", color="warning"), dcc.Link("← Home", href="/")], fluid=True)
 
-@app.callback(
-    Output("root", "children"),
-    Output("global-loading", "data", allow_duplicate=True),
-    Input("url-router", "pathname"),
-    prevent_initial_call="initial_duplicate",
-)
+@app.callback(Output("root", "children"), Input("url-router", "pathname"))
 def route(pathname: str):
     path = (pathname or "").rstrip("/")
 
@@ -59,24 +54,24 @@ def route(pathname: str):
         ba_slug = path.split("/plan/ba/", 1)[-1]
         ba = unquote(ba_slug)
         pid = f"ba::{ba}"
-        return dbc.Container([header_bar(), layout_for_plan(pid)], fluid=True), False
+        return dbc.Container([header_bar(), layout_for_plan(pid)], fluid=True)
 
     if path.startswith("/plan/"):
         try:
             pid = int(path.rsplit("/", 1)[-1])
         except Exception:
-            return not_found_layout(), False
-        return dbc.Container([header_bar(), layout_for_plan(pid)], fluid=True), False
+            return not_found_layout()
+        return dbc.Container([header_bar(), layout_for_plan(pid)], fluid=True)
 
     if path in ("/", None, ""):
-        return home_layout(), False
+        return home_layout()
 
     # Forecasting Workspace route
     if path == "/forecast":
-        return page_forecast(), False
+        return page_forecast()
     if path.startswith("/forecast/"):
         slug = path.split("/forecast/", 1)[-1]
-        return page_forecast_section(slug), False
+        return page_forecast_section(slug)
 
     pages = {
         "/settings": page_default_settings,
@@ -91,7 +86,7 @@ def route(pathname: str):
         "/help":     page_help,
     }
     fn = pages.get(path)
-    return (fn() if fn else not_found_layout()), False
+    return fn() if fn else not_found_layout()
 
 # Log navigation globally
 @callback(Output("nav-log-dummy","data"), Input("url-router","pathname"), prevent_initial_call=False)
