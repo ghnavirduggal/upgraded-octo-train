@@ -1,4 +1,5 @@
 from __future__ import annotations
+import dash
 from dash import html, dcc, dash_table, Output, Input
 import dash_bootstrap_components as dbc
 from app_instance import app, server
@@ -8,7 +9,7 @@ from common import header_bar, sidebar_component, global_loading_overlay, GLOBAL
 from planning_workspace import planning_layout, register_planning_ws
 from plan_detail import plan_detail_validation_layout, register_plan_detail
 from plan_store import auto_lock_previous_month_plans
-from pages.forecast_page import page_forecast_section
+from pages.forecast_page import page_forecast_section, forecast_shared_stores
 from callbacks_pkg import *  # registers callbacks
 
 
@@ -19,6 +20,7 @@ app.layout = html.Div([
     dcc.Store(id="nav-log-dummy"),
     dcc.Store(id="global-loading", data=False),
     dcc.Store(id="forecast-phase-store", storage_type="memory"),
+    *forecast_shared_stores(storage_type="memory"),
     _planning_ids_skeleton(),
     html.Div(id="app-wrapper", className="sidebar-collapsed", children=[
         html.Div(id="sidebar", children=sidebar_component(False).children),
@@ -40,6 +42,7 @@ app.validation_layout = html.Div([
     dcc.Store(id="ws-refresh"),
     dcc.Store(id="global-loading"),
     dcc.Store(id="forecast-phase-store", storage_type="memory"),
+    *forecast_shared_stores(storage_type="memory"),
     header_bar(),
     planning_layout(),
     plan_detail_validation_layout(),
@@ -92,22 +95,19 @@ def _toggle_global_loading(is_on):
         base["display"] = "none"
     return base
 
-# Show global overlay on route change (start of navigation)
+# Show/hide global overlay during navigation (avoid race conditions).
 @app.callback(
     Output("global-loading", "data", allow_duplicate=True),
     Input("url-router", "pathname"),
-    prevent_initial_call=True,
-)
-def _nav_start(_path):
-    return True
-
-# Hide global overlay after new page content renders
-@app.callback(
-    Output("global-loading", "data", allow_duplicate=True),
     Input("root", "children"),
     prevent_initial_call=True,
 )
-def _nav_end(_children):
+def _toggle_nav_loading(_path, _children):
+    trigger = dash.callback_context.triggered_id
+    if trigger == "url-router":
+        return True
+    if trigger == "root":
+        return False
     return False
 
 # Register callbacks (planning + plan-detail)
