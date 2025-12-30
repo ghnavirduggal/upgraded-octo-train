@@ -1784,7 +1784,7 @@ def _on_category_change(cat, store_json, iq_summary_store):
     Output("vs-seasonality-status", "children"),
     Output("vs-seasonality-store", "data", allow_duplicate=True),
     Input("vs-category-tabs", "value", allow_optional=True),
-    Input("vs-iq-summary-store", "data"),
+    State("vs-iq-summary-store", "data"),
     prevent_initial_call=True,
 )
 def _build_volume_seasonality(cat, iq_summary_store):
@@ -3255,12 +3255,13 @@ def _run_smoothing(n_basic, n_prophet, raw_json, window, threshold, prophet_orde
     Output("sa-window", "value"),
     Output("sa-threshold", "value"),
     Output("sa-prophet-order", "value"),
-    Input("sa-raw-store", "data"),
-    Input("forecast-phase-store", "data"),
+    Input("sa-upload", "contents", allow_optional=True),
+    State("sa-raw-store", "data"),
+    State("forecast-phase-store", "data"),
     State("sa-results-store", "data"),
     prevent_initial_call=True,
 )
-def _load_auto_smoothing(raw_json, phase_store, current_results):
+def _load_auto_smoothing(_contents, raw_json, phase_store, current_results):
     if raw_json:
         raise dash.exceptions.PreventUpdate
     if current_results:
@@ -4816,13 +4817,10 @@ def _di_build_forecasts(
     Output("di-holidays-store", "data", allow_duplicate=True),
     Output("di-transform-file", "options"),
     Output("di-transform-file", "value"),
-    Input("di-page-init", "data"),
     Input("di-refresh-forecast-dates", "n_clicks"),
     prevent_initial_call=True,
 )
-def _di_load_forecast_dates_cb(_init, _refresh):
-    if _init is None and not _refresh:
-        raise dash.exceptions.PreventUpdate
+def _di_load_forecast_dates_cb(_refresh):
     dates, msg = _di_load_forecast_dates()
     holidays_df, holidays_msg = _di_load_holidays()
 
