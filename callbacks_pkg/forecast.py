@@ -18,6 +18,14 @@ from sklearn.preprocessing import MinMaxScaler
 from pathlib import Path
 from app_instance import app
 from plan_detail._common import current_user_fallback
+from common import (
+    _bas_from_headcount,
+    _sbas_from_headcount,
+    _lobs_for_ba_sba,
+    _sites_for_ba_location,
+    _canon_scope,
+    CHANNEL_LIST,
+)
 import cap_store
 from forecasting.process_and_IQ_data import (
     IQ_data,
@@ -3038,28 +3046,6 @@ def _save_adjusted_to_db(n_clicks, adjusted_json, category):
         f"Monthly_Forecast_{_safe_filename_part(group_name, 'forecast_group')}"
         f"_{ts}_{_safe_filename_part(user, 'user')}.csv"
     )
-    download_data = dcc.send_data_frame(df.to_csv, filename, index=False)
-    save_notice = ""
-    try:
-        repo_root = Path(__file__).resolve().parent.parent
-        base_dir = repo_root / "exports"
-        base_dir_txt = repo_root / "latest_forecast_base_dir.txt"
-        if base_dir_txt.exists():
-            try:
-                base_dir_val = base_dir_txt.read_text().strip()
-                if base_dir_val:
-                    base_dir = Path(base_dir_val)
-            except Exception:
-                base_dir = base_dir
-        base_dir.mkdir(parents=True, exist_ok=True)
-        file_path = base_dir / filename
-        df.to_csv(file_path, index=False)
-        (repo_root / "latest_forecast_full_path.txt").write_text(str(file_path))
-        (repo_root / "latest_forecast_base_dir.txt").write_text(str(base_dir))
-        (repo_root / "latest_forecast_path.txt").write_text(filename)
-        save_notice = f" Saved locally to {file_path}."
-    except Exception as exc:
-        save_notice = f" Local save failed: {exc}"
     scope_key = "forecast|workspace|global|"
     metadata = {
         "source": "volume-summary-phase2",
@@ -3074,15 +3060,11 @@ def _save_adjusted_to_db(n_clicks, adjusted_json, category):
             metadata=metadata,
             pushed_to_planning=False,
         )
-        status = f"Saved forecast run #{run_id} by {user}. Downloading {filename}."
-        if save_notice:
-            status = f"{status}{save_notice}"
-        return status, download_data, shown_style
+        status = f"Saved forecast run #{run_id} by {user}."
+        return status, no_update, shown_style
     except Exception as exc:
-        status = f"Download ready ({filename}). DB save failed: {exc}"
-        if save_notice:
-            status = f"{status}{save_notice}"
-        return status, download_data, shown_style
+        status = f"DB save failed: {exc}"
+        return status, no_update, shown_style
 
 
 @app.callback(
@@ -4088,88 +4070,6 @@ def _select_saved_run(cell, rows):
 # ---------------------------------------------------------------------------
 
 
-def _load_latest_forecast_file() -> tuple[pd.DataFrame, str]:
-    repo_root = Path(__file__).resolve().parent.parent
-    full_path_txt = repo_root / "latest_forecast_full_path.txt"
-    base_dir_txt = repo_root / "latest_forecast_base_dir.txt"
-    short_path_txt = repo_root / "latest_forecast_path.txt"
-
-    def _latest_in_dir(dir_path: Path) -> Optional[Path]:
-        if not dir_path.exists():
-            return None
-        patterns = [
-            "Monthly_Forecast_*.csv",
-            "adjusted_forecast_by_group*.csv",
-            "Monthly_Forecast_with_Adjustments_*.csv",
-        ]
-        candidates = []
-        for pattern in patterns:
-            candidates.extend(dir_path.glob(pattern))
-        if not candidates:
-            return None
-        try:
-            return max(candidates, key=lambda p: p.stat().st_mtime)
-        except Exception:
-            return None
-
-    try:
-        if full_path_txt.exists():
-            file_path = full_path_txt.read_text().strip()
-            if file_path:
-                path = Path(file_path)
-                if path.exists():
-                    df = pd.read_csv(path)
-                    return df, f"Loaded {path.name}."
-                return pd.DataFrame(), f"File not found: {file_path}"
-    except Exception as exc:
-        return pd.DataFrame(), f"Could not load latest forecast: {exc}"
-
-    if short_path_txt.exists():
-        try:
-            filename = short_path_txt.read_text().strip()
-        except Exception:
-            filename = ""
-        if filename:
-            base_dir = None
-            if base_dir_txt.exists():
-                try:
-                    base_dir_val = base_dir_txt.read_text().strip()
-                    base_dir = Path(base_dir_val) if base_dir_val else None
-                except Exception:
-                    base_dir = None
-            for root in [base_dir, repo_root / "exports", repo_root]:
-                if root and root.exists():
-                    candidate = root / filename
-                    if candidate.exists():
-                        try:
-                            df = pd.read_csv(candidate)
-                            return df, f"Loaded {candidate.name}."
-                        except Exception as exc:
-                            return pd.DataFrame(), f"Could not load latest forecast: {exc}"
-
-    base_dir = None
-    if base_dir_txt.exists():
-        try:
-            base_dir_val = base_dir_txt.read_text().strip()
-            if base_dir_val:
-                base_dir = Path(base_dir_val)
-        except Exception:
-            base_dir = None
-
-    for root in [base_dir, repo_root / "exports", repo_root]:
-        if not root:
-            continue
-        latest = _latest_in_dir(root)
-        if latest is not None:
-            try:
-                df = pd.read_csv(latest)
-                return df, f"Loaded {latest.name}."
-            except Exception as exc:
-                return pd.DataFrame(), f"Could not load latest forecast: {exc}"
-
-    return pd.DataFrame(), "No latest forecast path found."
-
-
 def _options_from_df(df: pd.DataFrame, col: str):
     if col not in df.columns:
         return []
@@ -4177,13 +4077,20 @@ def _options_from_df(df: pd.DataFrame, col: str):
     return [{"label": str(v), "value": v} for v in vals]
 
 
-def _saved_forecast_options(limit: int = 100) -> tuple[list[dict], Optional[int], str]:
+def _saved_forecast_options(
+    limit: int = 100,
+    model_name: Optional[str] = None,
+) -> tuple[list[dict], Optional[int], str]:
     try:
         df = cap_store.list_forecast_runs(limit=limit)
     except Exception as exc:
         return [], None, f"Could not load saved forecasts: {exc}"
     if df is None or df.empty:
         return [], None, "No saved forecasts found."
+    if model_name:
+        df = df[df["model_name"].astype(str) == str(model_name)]
+        if df.empty:
+            return [], None, "No saved forecasts found."
     options = []
     for _, row in df.iterrows():
         run_id = row.get("id")
@@ -4226,11 +4133,11 @@ def _load_saved_forecast(run_id: Any) -> tuple[pd.DataFrame, str]:
     Output("tp-saved-run", "options"),
     Output("tp-saved-run", "value"),
     Output("tp-saved-status", "children"),
-    Input("tp-refresh-saved", "n_clicks"),
+    Input("url-router", "pathname"),
     prevent_initial_call=True,
 )
-def _tp_refresh_saved_runs(n):
-    if not n:
+def _tp_refresh_saved_runs(pathname):
+    if not pathname or not pathname.startswith("/forecast/transformation-projects"):
         raise dash.exceptions.PreventUpdate
     return _saved_forecast_options()
 
@@ -4239,13 +4146,13 @@ def _tp_refresh_saved_runs(n):
     Output("di-saved-run", "options"),
     Output("di-saved-run", "value"),
     Output("di-saved-status", "children"),
-    Input("di-refresh-saved", "n_clicks"),
+    Input("url-router", "pathname"),
     prevent_initial_call=True,
 )
-def _di_refresh_saved_runs(n):
-    if not n:
+def _di_refresh_saved_runs(pathname):
+    if not pathname or not pathname.startswith("/forecast/daily-interval"):
         raise dash.exceptions.PreventUpdate
-    return _saved_forecast_options()
+    return _saved_forecast_options(model_name="transformation-projects")
 
 
 @app.callback(
@@ -4256,28 +4163,12 @@ def _di_refresh_saved_runs(n):
     Output("tp-year", "options"),
     Output("tp-raw-table", "data"),
     Output("tp-raw-table", "columns"),
-    Input("tp-load-latest", "n_clicks"),
-    Input("tp-use-phase", "n_clicks"),
-    Input("tp-load-saved", "n_clicks"),
-    State("fc-data-store", "data"),
-    State("vs-adjusted-store", "data"),
-    State("vs-phase2-store", "data"),
-    State("tp-saved-run", "value"),
+    Input("tp-saved-run", "value"),
     prevent_initial_call=True,
 )
-def _tp_load_source(
-    n_file,
-    n_phase,
-    n_saved,
-    fc_store_json,
-    adjusted_json,
-    phase2_store,
-    saved_run_id,
-):
-    if not n_file and not n_phase and not n_saved:
+def _tp_load_source(saved_run_id):
+    if not saved_run_id:
         raise dash.exceptions.PreventUpdate
-    ctx = dash.callback_context
-    trig = ctx.triggered_id if ctx.triggered_id else "tp-load-latest"
 
     df = pd.DataFrame()
     msg = ""
@@ -4319,66 +4210,9 @@ def _tp_load_source(
             df_out["forecast_group"] = "Category"
         return df_out
 
-    if trig == "tp-load-latest":
-        df, msg = _load_latest_forecast_file()
-        if not df.empty:
-            df = _normalize_tp_df(df)
-    elif trig == "tp-use-phase":
-        used = False
-        err_msg = ""
-
-        if adjusted_json:
-            try:
-                df = pd.read_json(io.StringIO(adjusted_json), orient="split")
-                if not df.empty:
-                    df = _normalize_tp_df(df)
-                    msg = "Loaded adjusted Phase 2 forecast (volume split applied)."
-                    used = True
-            except Exception as exc:
-                err_msg = f"Could not parse adjusted Phase 2 data: {exc}"
-
-        if not used and phase2_store:
-            try:
-                payload = json.loads(phase2_store) if isinstance(phase2_store, str) else phase2_store
-                base_json = payload.get("base_df") if isinstance(payload, dict) else None
-                if base_json:
-                    base_df = pd.read_json(io.StringIO(base_json), orient="split")
-                else:
-                    base_df = pd.DataFrame()
-                if not base_df.empty:
-                    df = _normalize_tp_df(base_df)
-                    msg = "Loaded Phase 2 base forecast (category-level). Apply volume split for forecast-group results."
-                    used = True
-                else:
-                    err_msg = "Phase 2 base forecast not found."
-            except Exception as exc:
-                err_msg = f"Could not parse Phase 2 base forecast: {exc}"
-
-        if not used and fc_store_json:
-            try:
-                payload = json.loads(fc_store_json)
-                combined = pd.DataFrame(payload.get("combined", []))
-                pivot = pd.DataFrame(payload.get("pivot_smoothed", []))
-                if not combined.empty:
-                    df = _normalize_tp_df(combined)
-                    msg = "Loaded from Phase 2 results."
-                    used = True
-                elif not pivot.empty:
-                    pivot = pivot.copy()
-                    df = pivot
-                    msg = "Loaded pivot smoothed from Phase 2."
-                    used = True
-                else:
-                    err_msg = "No Phase 2 data available."
-            except Exception as exc:
-                err_msg = f"Could not parse Phase 2 data: {exc}"
-
-        if not used:
-            msg = err_msg or "Phase 2 results not found."
-    elif trig == "tp-load-saved":
-        df, msg = _load_saved_forecast(saved_run_id)
-        if not df.empty:
-            df = _normalize_tp_df(df)
+    df, msg = _load_saved_forecast(saved_run_id)
+    if not df.empty:
+        df = _normalize_tp_df(df)
 
     opts_group = _options_from_df(df, "forecast_group")
     opts_model = _options_from_df(df, "Model")
@@ -4623,6 +4457,63 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
 
 
 @app.callback(
+    Output("tp-save-status", "children", allow_duplicate=True),
+    Output("di-saved-run", "options", allow_duplicate=True),
+    Output("di-saved-run", "value", allow_duplicate=True),
+    Output("di-saved-status", "children", allow_duplicate=True),
+    Input("tp-complete", "n_clicks"),
+    State("tp-final-store", "data"),
+    prevent_initial_call=True,
+)
+def _tp_save_and_stage_di(n_clicks, final_json):
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+    if not final_json:
+        return "Run transformations first.", no_update, no_update, no_update
+    try:
+        df = pd.read_json(io.StringIO(final_json), orient="split")
+    except Exception as exc:
+        return f"Could not read transformed forecast: {exc}", no_update, no_update, no_update
+    if df.empty:
+        return "Transformed forecast is empty.", no_update, no_update, no_update
+
+    if "Forecast_Marketing Campaign 3" in df.columns and "Final_Forecast_Post_Transformations" not in df.columns:
+        df["Final_Forecast_Post_Transformations"] = df["Forecast_Marketing Campaign 3"]
+
+    try:
+        user = current_user_fallback() or "unknown"
+    except Exception:
+        user = "unknown"
+    scope_key = "forecast|workspace|global|"
+    metadata = {
+        "source": "transformation-projects",
+        "saved_at": pd.Timestamp.utcnow().isoformat(),
+        "kind": "transformed",
+    }
+    try:
+        run_id = cap_store.record_forecast_run(
+            scope_key=scope_key,
+            forecast_df=df,
+            created_by=user,
+            model_name="transformation-projects",
+            metadata=metadata,
+            pushed_to_planning=False,
+        )
+    except Exception as exc:
+        return f"DB save failed: {exc}", no_update, no_update, no_update
+
+    options, _default_val, _status = _saved_forecast_options(model_name="transformation-projects")
+    option_values = {opt.get("value") for opt in options}
+    if run_id not in option_values:
+        label = f"#{run_id} | transformation-projects | {user}"
+        options.insert(0, {"label": label, "value": run_id})
+
+    tp_status = f"Saved transformed forecast #{run_id} by {user}."
+    di_status = f"Loaded transformed forecast #{run_id}."
+    return tp_status, options, run_id, di_status
+
+
+@app.callback(
     Output("tp-download-final", "data"),
     Input("tp-download-final-btn", "n_clicks"),
     State("tp-final-store", "data"),
@@ -4691,7 +4582,7 @@ def _tp_download_full(n, final_json):
 
 
 @app.callback(
-    Output("tp-save-status", "children", allow_duplicate=True),
+    Output("tp-save-status", "children"),
     Input("tp-save-btn", "n_clicks"),
     State("tp-final-store", "data"),
     prevent_initial_call=True,
@@ -4980,6 +4871,627 @@ def _di_interval_ratios(interval_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
     return interval_ratio, overall_ratio, "Interval ratios computed."
 
 
+def _di_prepare_original_data(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"], errors="coerce")
+    d["volume"] = pd.to_numeric(d["volume"], errors="coerce")
+    d = d.dropna(subset=["date", "volume"])
+    if d.empty:
+        return d
+    d["month_period"] = d["date"].dt.to_period("M")
+    d["Month_Year"] = d["date"].dt.strftime("%b-%y")
+    d["Month_Year_Long"] = d["date"].dt.strftime("%b %Y")
+    d["Day"] = d["date"].dt.day
+    d["Weekday"] = d["date"].dt.day_name()
+    d["Year"] = d["date"].dt.year
+    d["Month"] = d["date"].dt.month_name()
+    totals = d.groupby("month_period")["volume"].transform("sum")
+    d["Volume%"] = np.where(totals > 0, d["volume"] / totals * 100, np.nan)
+    d["Volume%"] = d["Volume%"].round(2)
+    d["daily_volume"] = d["volume"]
+    return d
+
+
+def _di_sort_month_str(values: list[str]) -> list[str]:
+    def _key(val: str):
+        return pd.to_datetime(val, format="%b-%y", errors="coerce")
+    ordered = sorted(values, key=lambda v: (pd.isna(_key(v)), _key(v)))
+    return [v for v in ordered if isinstance(v, str)]
+
+
+def _di_matching_months_table(d: pd.DataFrame, target_month: pd.Timestamp) -> tuple[pd.DataFrame, list[str]]:
+    if d is None or d.empty:
+        return pd.DataFrame(), []
+    first_days = (
+        d.groupby("month_period")["date"]
+        .min()
+        .reset_index()
+        .dropna(subset=["date"])
+    )
+    if first_days.empty:
+        return pd.DataFrame(), []
+    first_days["Month_Year"] = first_days["date"].dt.strftime("%b-%y")
+    first_days["Year"] = first_days["date"].dt.year
+    first_days["Month"] = first_days["date"].dt.month_name()
+    first_days["FirstDayName"] = first_days["date"].dt.day_name()
+    target_weekday = target_month.weekday()
+    matching = first_days[first_days["date"].dt.weekday == target_weekday]
+    match_vals = matching["Month_Year"].dropna().astype(str).tolist()
+    return first_days, _di_sort_month_str(match_vals)
+
+
+def _di_sequential_mapping_table(d: pd.DataFrame, month_year_list: list[str], value_col: str) -> pd.DataFrame:
+    if d is None or d.empty or not month_year_list:
+        return pd.DataFrame()
+    rows = {}
+    all_cols: set[str] = set()
+    for month_year in month_year_list:
+        try:
+            month_date = pd.to_datetime(month_year, format="%b-%y")
+        except Exception:
+            continue
+        month_data = d[d["Month_Year"] == month_year]
+        if month_data.empty:
+            continue
+        days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
+        row_vals = {}
+        for day in range(1, days_in_month + 1):
+            actual_date = pd.Timestamp(month_date.year, month_date.month, day)
+            col = f"{actual_date.strftime('%a')}_{day}"
+            val = month_data.loc[month_data["Day"] == day, value_col]
+            row_vals[col] = round(float(val.sum()), 2) if not val.empty else np.nan
+            all_cols.add(col)
+        rows[month_year] = row_vals
+    if not rows:
+        return pd.DataFrame()
+
+    def _sort_key(col: str) -> tuple[int, str]:
+        match = re.search(r"_(\d+)$", str(col))
+        return (int(match.group(1)) if match else 999, str(col))
+
+    ordered_cols = sorted(all_cols, key=_sort_key)
+    df = pd.DataFrame.from_dict(rows, orient="index").reindex(columns=ordered_cols)
+    df.index.name = "MonthYear"
+    df = df.reset_index().rename(columns={"MonthYear": "Month_Year"})
+    avg = df[ordered_cols].mean(axis=0, skipna=True)
+    avg_row = pd.DataFrame([["Average"] + avg.tolist()], columns=["Month_Year"] + ordered_cols)
+    editable_row = pd.DataFrame([["Average_Editable"] + avg.tolist()], columns=["Month_Year"] + ordered_cols)
+    return pd.concat([df, avg_row, editable_row], ignore_index=True)
+
+
+def _di_single_month_table(
+    d: pd.DataFrame,
+    month_year_list: list[str],
+    value_col: str,
+    holidays_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if d is None or d.empty or not month_year_list:
+        return pd.DataFrame()
+    max_days = 0
+    parsed = []
+    for month_year in month_year_list:
+        try:
+            month_date = pd.to_datetime(month_year, format="%b-%y")
+        except Exception:
+            continue
+        parsed.append((month_year, month_date))
+        max_days = max(max_days, calendar.monthrange(month_date.year, month_date.month)[1])
+    if max_days == 0:
+        return pd.DataFrame()
+
+    holidays = pd.DataFrame()
+    if isinstance(holidays_df, pd.DataFrame) and not holidays_df.empty and "holiday_date" in holidays_df.columns:
+        holidays = holidays_df.copy()
+        holidays["holiday_date"] = pd.to_datetime(holidays["holiday_date"], errors="coerce").dt.normalize()
+
+    day_cols = [str(i) for i in range(1, max_days + 1)]
+    rows = []
+    for month_year, month_date in parsed:
+        month_data = d[d["Month_Year"] == month_year]
+        if month_data.empty:
+            continue
+        row = {"Month_Year": month_year}
+        values_for_avg = []
+        for day in range(1, max_days + 1):
+            if day > calendar.monthrange(month_date.year, month_date.month)[1]:
+                row[str(day)] = np.nan
+                continue
+            val = month_data.loc[month_data["Day"] == day, value_col]
+            cell_val = float(val.sum()) if not val.empty else np.nan
+            row[str(day)] = cell_val
+            day_date = pd.Timestamp(month_date.year, month_date.month, day).normalize()
+            is_holiday = False
+            if not holidays.empty:
+                is_holiday = day_date in holidays["holiday_date"].values
+            if pd.notna(cell_val) and not is_holiday and cell_val > 0:
+                values_for_avg.append(cell_val)
+        row["Avg"] = float(np.mean(values_for_avg)) if values_for_avg else np.nan
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    out = pd.DataFrame(rows)
+    out = out[["Month_Year"] + day_cols + ["Avg"]]
+    avg_row = {"Month_Year": "Avg"}
+    for col in day_cols:
+        avg_row[col] = float(out[col].mean(skipna=True))
+    avg_row["Avg"] = float(out["Avg"].mean(skipna=True))
+    out = pd.concat([out, pd.DataFrame([avg_row])], ignore_index=True)
+    return out
+
+
+def _di_get_holidays_in_month(holidays_df: pd.DataFrame, year: int, month: int) -> pd.DataFrame:
+    if holidays_df is None or holidays_df.empty or "holiday_date" not in holidays_df.columns:
+        return pd.DataFrame()
+    h = holidays_df.copy()
+    h["holiday_date"] = pd.to_datetime(h["holiday_date"], errors="coerce").dt.normalize()
+    start = pd.Timestamp(year, month, 1).normalize()
+    end = pd.Timestamp(year, month, calendar.monthrange(year, month)[1]).normalize()
+    mask = (h["holiday_date"] >= start) & (h["holiday_date"] <= end)
+    return h[mask]
+
+
+def _di_get_impact_days_for_month(year: int, month: int, holidays_df: pd.DataFrame) -> list[tuple[int, str, bool]]:
+    impact_days = []
+    if month == 12:
+        for day in range(24, 32):
+            impact_days.append((day, "Christmas Period", day in [25, 26]))
+        return impact_days
+    if month == 1:
+        for day in range(1, 3):
+            impact_days.append((day, "New Year Period", day == 1))
+        return impact_days
+    if holidays_df is None or holidays_df.empty or "holiday_date" not in holidays_df.columns:
+        return impact_days
+    month_holidays = _di_get_holidays_in_month(holidays_df, year, month)
+    if month_holidays.empty or "holiday_name" not in month_holidays.columns:
+        return impact_days
+    for _, row in month_holidays.iterrows():
+        name = str(row.get("holiday_name", "")).strip()
+        dt = pd.to_datetime(row.get("holiday_date"), errors="coerce")
+        if pd.isna(dt):
+            continue
+        day = int(dt.day)
+        if "good friday" in name.lower():
+            days_after = 0
+        elif any(k in name.lower() for k in ["easter monday", "early may", "spring bank", "summer bank"]):
+            days_after = 4
+        else:
+            days_after = 2
+        for offset in range(days_after + 1):
+            impact_day = day + offset
+            if impact_day <= calendar.monthrange(year, month)[1]:
+                impact_days.append((impact_day, name or "Holiday", offset == 0))
+    return impact_days
+
+
+def _di_weekday_averages_excluding_impact_days(
+    d: pd.DataFrame,
+    year: int,
+    month: int,
+    holidays_df: pd.DataFrame,
+    value_col: str,
+) -> dict[str, float]:
+    month_year = pd.Timestamp(year, month, 1).strftime("%b-%y")
+    month_data = d[d["Month_Year"] == month_year].copy()
+    if month_data.empty:
+        return {}
+    impact_days = _di_get_impact_days_for_month(year, month, holidays_df)
+    impact_nums = {day for day, _name, _is_event in impact_days}
+    weekday_vals: dict[str, list[float]] = {}
+    for _, row in month_data.iterrows():
+        day_num = int(row["Day"])
+        if day_num in impact_nums:
+            continue
+        wd = row["date"].day_name()
+        weekday_vals.setdefault(wd, []).append(float(row[value_col]) if pd.notna(row[value_col]) else 0.0)
+    return {k: float(np.mean(v)) for k, v in weekday_vals.items() if v}
+
+
+def _di_impact_analysis_table(
+    d: pd.DataFrame,
+    year: int,
+    month: int,
+    holidays_df: pd.DataFrame,
+    value_col: str,
+) -> pd.DataFrame:
+    month_year = pd.Timestamp(year, month, 1).strftime("%b-%y")
+    if month_year not in d["Month_Year"].values:
+        return pd.DataFrame()
+    weekday_avg = _di_weekday_averages_excluding_impact_days(d, year, month, holidays_df, value_col)
+    if not weekday_avg:
+        return pd.DataFrame()
+    impact_days = _di_get_impact_days_for_month(year, month, holidays_df)
+    if not impact_days:
+        return pd.DataFrame()
+
+    month_data = d[d["Month_Year"] == month_year].copy()
+    rows = []
+    for day_num, holiday_name, is_event in impact_days:
+        day_data = month_data[month_data["Day"] == day_num]
+        if day_data.empty:
+            continue
+        actual_date = day_data.iloc[0]["date"]
+        weekday_name = actual_date.strftime("%A")
+        weekday_abbr = actual_date.strftime("%a")
+        actual_value = float(day_data[value_col].sum())
+        avg_value = float(weekday_avg.get(weekday_name, 0.0))
+        vol_pct = (actual_value / avg_value * 100) if avg_value > 0 else 0.0
+        change_pct = vol_pct - 100
+        rows.append(
+            {
+                "Weekday": weekday_name,
+                "Avg_Value": round(avg_value, 2),
+                "Date": f"{day_num}-{actual_date.strftime('%b')}",
+                "Weekday_Abbr": weekday_abbr,
+                "Actual_Value": round(actual_value, 2),
+                "Vol_Pct": round(vol_pct, 2),
+                "Change_Pct": round(change_pct, 2),
+                "Holiday_Name": holiday_name,
+                "Day_Num": day_num,
+                "Is_Event": bool(is_event),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _di_weekly_vertical_tables(
+    d: pd.DataFrame,
+    month_years: list[str],
+    value_col: str,
+) -> list[tuple[str, pd.DataFrame]]:
+    if d is None or d.empty or not month_years:
+        return []
+    out = []
+    weekday_order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    for month_year in month_years:
+        month_data = d[d["Month_Year"] == month_year].copy()
+        if month_data.empty:
+            continue
+        try:
+            month_date = pd.to_datetime(month_year, format="%b-%y")
+        except Exception:
+            continue
+        days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
+        first_day = pd.Timestamp(month_date.year, month_date.month, 1)
+        first_weekday_num = first_day.weekday()
+        weeks = []
+        current_week = [np.nan] * first_weekday_num
+        for day in range(1, days_in_month + 1):
+            day_data = month_data[month_data["Day"] == day]
+            value = float(day_data[value_col].sum()) if not day_data.empty else 0.0
+            current_week.append(value)
+            if len(current_week) == 7 or day == days_in_month:
+                while len(current_week) < 7:
+                    current_week.append(np.nan)
+                weeks.append(current_week)
+                current_week = []
+        df = pd.DataFrame(weeks, columns=weekday_order)
+        df.insert(0, "MonthYear", month_year)
+        out.append((month_year, df))
+    return out
+
+
+def _di_forecast_rows(
+    base_values: list[float],
+    impact_table: pd.DataFrame,
+    forecast_date: pd.Timestamp,
+) -> tuple[pd.DataFrame, list[float]]:
+    days_in_month = calendar.monthrange(forecast_date.year, forecast_date.month)[1]
+    base_vals = (base_values or [])[:days_in_month]
+    if len(base_vals) < days_in_month:
+        base_vals = base_vals + [0.0] * (days_in_month - len(base_vals))
+    adjusted = base_vals[:]
+    if isinstance(impact_table, pd.DataFrame) and not impact_table.empty:
+        for _, row in impact_table.iterrows():
+            day_num = int(row.get("Day_Num") or 0)
+            if day_num < 1 or day_num > days_in_month:
+                continue
+            change_pct = float(row.get("Change_Pct") or 0.0)
+            base_value = float(base_vals[day_num - 1])
+            adjusted_value = base_value * (1 + change_pct / 100.0)
+            adjusted_value = adjusted_value * 1.1
+            adjusted[day_num - 1] = adjusted_value
+    total = sum(adjusted)
+    if total > 0:
+        normalized = [v / total * 100 for v in adjusted]
+    else:
+        normalized = adjusted
+    cols = [str(i) for i in range(1, days_in_month + 1)]
+    def _row(label: str, values: list[float]) -> dict:
+        return {"Row": label, **{c: round(values[int(c) - 1], 2) for c in cols}, "Sum": round(sum(values), 2)}
+    df = pd.DataFrame([
+        _row("Base", base_vals),
+        _row("Adjusted", adjusted),
+        _row("Final", normalized),
+    ])
+    return df, normalized
+
+
+def _di_forecast_vertical_table(values: list[float], forecast_date: pd.Timestamp) -> pd.DataFrame:
+    if not values:
+        return pd.DataFrame()
+    days_in_month = len(values)
+    weekday_order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    first_day = pd.Timestamp(forecast_date.year, forecast_date.month, 1)
+    first_weekday = first_day.weekday()
+    table_rows = []
+    current_day = 1
+    while current_day <= days_in_month:
+        row = {}
+        for weekday_idx, weekday in enumerate(weekday_order):
+            day_num = (weekday_idx - first_weekday) + (len(table_rows) * 7) + 1
+            if 1 <= day_num <= days_in_month:
+                row[weekday] = round(values[day_num - 1], 2)
+                current_day = day_num + 1
+            else:
+                row[weekday] = np.nan
+        table_rows.append(row)
+        if current_day > days_in_month:
+            break
+    return pd.DataFrame(table_rows)
+
+
+def _di_weekday_pattern_chart(d: pd.DataFrame, month_years: list[str], value_col: str) -> Optional[go.Figure]:
+    if d is None or d.empty or not month_years:
+        return None
+    chart_data = []
+    earliest_weekday_num = None
+    max_days = 0
+    for month_year in month_years:
+        try:
+            month_date = pd.to_datetime(month_year, format="%b-%y")
+        except Exception:
+            continue
+        month_data = d[d["Month_Year"] == month_year].copy()
+        if month_data.empty:
+            continue
+        weekday_num = pd.Timestamp(month_date.year, month_date.month, 1).weekday()
+        days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
+        if earliest_weekday_num is None or weekday_num < earliest_weekday_num:
+            earliest_weekday_num = weekday_num
+        max_days = max(max_days, days_in_month)
+        chart_data.append({"month": month_year, "data": month_data, "weekday_num": weekday_num, "days": days_in_month})
+    if not chart_data or earliest_weekday_num is None:
+        return None
+    total_positions = (max_days + (7 - 1)) + (chart_data[0]["weekday_num"] - earliest_weekday_num)
+    weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    weekday_abbr = {"Monday": "Mon", "Tuesday": "Tue", "Wednesday": "Wed", "Thursday": "Thu", "Friday": "Fri", "Saturday": "Sat", "Sunday": "Sun"}
+    x_labels = []
+    for pos in range(total_positions):
+        weekday_idx = (earliest_weekday_num + pos) % 7
+        week_num = (pos // 7) + 1
+        x_labels.append(f"{weekday_abbr[weekday_order[weekday_idx]]}_{week_num}")
+
+    fig = go.Figure()
+    all_values_by_pos = {i: [] for i in range(total_positions)}
+    for item in chart_data:
+        month_date = pd.to_datetime(item["month"], format="%b-%y", errors="coerce")
+        if pd.isna(month_date):
+            continue
+        offset = item["weekday_num"] - earliest_weekday_num
+        y_values = [None] * total_positions
+        for day in range(1, item["days"] + 1):
+            pos = offset + day - 1
+            if pos >= total_positions:
+                continue
+            day_val = item["data"].loc[item["data"]["Day"] == day, value_col]
+            val = float(day_val.sum()) if not day_val.empty else 0.0
+            y_values[pos] = val
+            if val > 0:
+                all_values_by_pos[pos].append(val)
+        fig.add_trace(go.Scatter(x=x_labels, y=y_values, mode="lines+markers", name=item["month"], opacity=0.7))
+    avg_values = [np.mean(all_values_by_pos[i]) if all_values_by_pos[i] else None for i in range(total_positions)]
+    fig.add_trace(go.Scatter(x=x_labels, y=avg_values, mode="lines+markers", name="Average", line=dict(width=3, dash="dash")))
+    fig.update_layout(title="Weekday pattern comparison", xaxis_title="Day (Week_#)", yaxis_title="Value")
+    return fig
+
+
+def _di_interval_section_tables(interval_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, Optional[go.Figure]]:
+    if interval_df is None or interval_df.empty:
+        return pd.DataFrame(), pd.DataFrame(), None
+    date_col = _pick_col(interval_df, ("date", "ds", "timestamp"))
+    ivl_col = _pick_col(interval_df, ("interval", "time", "interval_start"))
+    vol_col = _pick_col(interval_df, ("volume", "calls", "items", "count"))
+    if not date_col or not ivl_col or not vol_col:
+        return pd.DataFrame(), pd.DataFrame(), None
+    d = interval_df.copy()
+    d["date"] = pd.to_datetime(d[date_col], errors="coerce")
+    d["interval"] = d[ivl_col].astype(str)
+    d["volume"] = pd.to_numeric(d[vol_col], errors="coerce")
+    d = d.dropna(subset=["date", "interval", "volume"])
+    if d.empty:
+        return pd.DataFrame(), pd.DataFrame(), None
+    max_date = d["date"].max()
+    if pd.notna(max_date):
+        cutoff = max_date - pd.DateOffset(months=3)
+        d = d[d["date"] >= cutoff]
+    d["weekday"] = d["date"].dt.day_name()
+    d["day_total"] = d.groupby("date")["volume"].transform("sum")
+    d = d[d["day_total"] > 0]
+    d["volume_ratio"] = d["volume"] / d["day_total"] * 100
+    section1 = d.pivot_table(index="interval", columns=["date", "weekday"], values="volume_ratio", aggfunc="sum", fill_value=0)
+    section1_cols = []
+    for col in section1.columns:
+        try:
+            date_val, wd = col
+            label = f"{pd.to_datetime(date_val).strftime('%d %b %Y')} ({wd})"
+        except Exception:
+            label = str(col)
+        section1_cols.append(label)
+    section1.columns = section1_cols
+    section1 = section1.reset_index()
+
+    weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    section2_data = {"interval": section1["interval"]}
+    for wd in weekdays:
+        cols = [c for c in section1.columns if isinstance(c, str) and f"({wd})" in c]
+        if cols:
+            section2_data[wd] = section1[cols].mean(axis=1)
+    section2 = pd.DataFrame(section2_data)
+    fig = go.Figure()
+    for wd in [c for c in section2.columns if c != "interval"]:
+        fig.add_trace(go.Scatter(x=section2["interval"], y=section2[wd], mode="lines+markers", name=wd))
+    fig.update_layout(title="Average volume share by interval and weekday", xaxis_title="Interval", yaxis_title="Avg %")
+    return section1, section2, fig
+
+
+def _di_build_analysis(
+    original_df: pd.DataFrame,
+    forecast_month: pd.Timestamp,
+    distribution: pd.DataFrame,
+    monthly_forecast: float,
+    holidays_df: Optional[pd.DataFrame],
+    interval_df: pd.DataFrame,
+) -> dict:
+    analysis: dict = {"tables": [], "charts": []}
+    orig = _di_prepare_original_data(original_df)
+    if orig.empty:
+        analysis["error"] = "Original data not available for analysis."
+        return analysis
+
+    first_days, matching_months = _di_matching_months_table(orig, forecast_month)
+    matching_months = matching_months[-3:] if matching_months else []
+    matching_df = first_days[first_days["Month_Year"].isin(matching_months)].copy() if not first_days.empty else pd.DataFrame()
+
+    seq_table = _di_sequential_mapping_table(orig, matching_months, "Volume%")
+    table1 = _di_single_month_table(orig, matching_months, "Volume%", holidays_df or pd.DataFrame())
+
+    available_months = _di_sort_month_str(orig["Month_Year"].dropna().unique().tolist())
+    last_available = available_months[-1] if available_months else None
+    one_year_ago = forecast_month.replace(year=forecast_month.year - 1)
+    two_years_ago = forecast_month.replace(year=forecast_month.year - 2)
+    one_year_str = one_year_ago.strftime("%b-%y")
+    two_year_str = two_years_ago.strftime("%b-%y")
+
+    table2 = _di_single_month_table(orig, [two_year_str], "Volume%", holidays_df or pd.DataFrame()) if two_year_str in available_months else pd.DataFrame()
+    table3_month = one_year_str if one_year_str in available_months else last_available
+    table3 = _di_single_month_table(orig, [table3_month], "Volume%", holidays_df or pd.DataFrame()) if table3_month else pd.DataFrame()
+    table4 = _di_single_month_table(orig, [last_available], "Volume%", holidays_df or pd.DataFrame()) if last_available else pd.DataFrame()
+
+    holiday_info = ""
+    if holidays_df is not None and not holidays_df.empty:
+        month_holidays = _di_get_holidays_in_month(holidays_df, forecast_month.year, forecast_month.month)
+        if not month_holidays.empty and "holiday_name" in month_holidays.columns:
+            names = ", ".join(sorted({str(v) for v in month_holidays["holiday_name"].dropna().tolist()}))
+            if names:
+                holiday_info = f"Holidays in {forecast_month.strftime('%B %Y')}: {names}"
+
+    year1_impact = _di_impact_analysis_table(orig, one_year_ago.year, one_year_ago.month, holidays_df or pd.DataFrame(), "Volume%")
+    year2_impact = _di_impact_analysis_table(orig, two_years_ago.year, two_years_ago.month, holidays_df or pd.DataFrame(), "Volume%")
+
+    base_values = []
+    if not table1.empty:
+        day_cols = [c for c in table1.columns if c.isdigit()]
+        avg_row = table1[table1["Month_Year"] == "Avg"]
+        if not avg_row.empty:
+            base_values = avg_row[day_cols].iloc[0].tolist()
+        else:
+            base_values = table1[day_cols].mean(axis=0, skipna=True).tolist()
+    forecast_rows, normalized_vals = _di_forecast_rows(base_values, year1_impact, forecast_month)
+    if distribution is not None and not distribution.empty and "Distribution_Pct" in distribution.columns:
+        final_vals = distribution["Distribution_Pct"].tolist()
+        for idx, col in enumerate([c for c in forecast_rows.columns if c.isdigit()]):
+            if idx < len(final_vals):
+                forecast_rows.loc[forecast_rows["Row"] == "Final", col] = round(final_vals[idx], 2)
+        forecast_rows.loc[forecast_rows["Row"] == "Final", "Sum"] = round(sum(final_vals), 2)
+        normalized_vals = final_vals
+
+    forecast_vertical = _di_forecast_vertical_table(normalized_vals, forecast_month)
+    weekday_fig = _di_weekday_pattern_chart(orig, matching_months, "Volume%")
+
+    monthly_tables = _di_weekly_vertical_tables(orig, matching_months, "Volume%")
+    interval_section1, interval_section2, interval_fig = _di_interval_section_tables(interval_df)
+
+    analysis["tables"] = [
+        ("Original Data (filtered)", orig.head(200)),
+        ("Months where 1st day matches forecast month", matching_df),
+        ("Daily distribution (sequential mapping)", seq_table),
+        ("Table 1: Historical months starting on same weekday", table1),
+        (f"Table 2: {two_year_str} (2 Years Ago)", table2),
+        (f"Table 3: {table3_month or 'N/A'}", table3),
+        (f"Table 4: {last_available or 'N/A'} (Latest)", table4),
+        ("Holiday Impact Analysis (Year-1)", year1_impact),
+        ("Holiday Impact Analysis (Year-2 Reference)", year2_impact),
+        ("Forecast Rows (Base/Adjusted/Final)", forecast_rows),
+        ("Avg Distribution for Forecast Month", forecast_vertical),
+        ("Daily Distribution Pattern (Last 3 Months)", interval_section1),
+        ("Average Daily Distribution Pattern by Weekday", interval_section2),
+    ]
+    analysis["charts"] = [
+        ("Weekday Pattern Comparison", weekday_fig),
+        ("Average Volume Share by Interval and Weekday", interval_fig),
+    ]
+    analysis["monthly_tables"] = monthly_tables
+    analysis["holiday_info"] = holiday_info
+    analysis["monthly_forecast"] = monthly_forecast
+    return analysis
+
+
+def _di_render_analysis(analysis: dict):
+    if not analysis:
+        return []
+
+    def _table_block(title: str, df: pd.DataFrame):
+        if df is None or df.empty:
+            return html.Div()
+        df_use = df.copy()
+        for col in df_use.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_use[col]):
+                df_use[col] = df_use[col].dt.strftime("%Y-%m-%d")
+        return html.Div(
+            [
+                html.H6(title, className="mt-3 mb-2"),
+                dash_table.DataTable(
+                    data=df_use.to_dict("records"),
+                    columns=_cols(df_use),
+                    page_size=8,
+                    page_action="none",
+                    fixed_rows={"headers": True},
+                    style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
+                    style_cell={"fontSize": 12, "padding": "6px 8px"},
+                ),
+            ]
+        )
+
+    blocks = []
+    if analysis.get("monthly_forecast") is not None:
+        try:
+            blocks.append(
+                html.Div(
+                    f"Monthly forecast value: {float(analysis['monthly_forecast']):,.0f}",
+                    className="small text-muted",
+                )
+            )
+        except Exception:
+            pass
+    if analysis.get("holiday_info"):
+        blocks.append(html.Div(analysis["holiday_info"], className="small text-muted mt-2"))
+    for title, df in analysis.get("tables", []):
+        blocks.append(_table_block(title, df))
+
+    if analysis.get("monthly_tables"):
+        blocks.append(html.H6("Monthly Distribution View", className="mt-3 mb-2"))
+        for title, df in analysis["monthly_tables"]:
+            blocks.append(_table_block(title, df))
+
+    for title, fig in analysis.get("charts", []):
+        if fig is None:
+            continue
+        blocks.append(
+            html.Div(
+                [
+                    html.H6(title, className="mt-3 mb-2"),
+                    dcc.Graph(figure=fig, config={"displayModeBar": False}),
+                ]
+            )
+        )
+    return blocks
+
+
 def _di_build_forecasts(
     transform_df: pd.DataFrame,
     interval_df: pd.DataFrame,
@@ -4988,9 +5500,10 @@ def _di_build_forecasts(
     model_value: Optional[str],
     month_value: Optional[str],
     distribution_override: Optional[pd.DataFrame] = None,
-) -> tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    holidays_df: Optional[pd.DataFrame] = None,
+) -> tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict, dict]:
     if transform_df.empty:
-        return "Load a transformed forecast first.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+        return "Load a transformed forecast first.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
 
     tf = transform_df.copy()
     tf_cols = {c.lower(): c for c in tf.columns}
@@ -5014,7 +5527,7 @@ def _di_build_forecasts(
             val_col = cand
             break
     if not val_col:
-        return "No forecast value column found.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+        return "No forecast value column found.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
 
     if forecast_month is not None:
         month_num = forecast_month.month
@@ -5034,20 +5547,21 @@ def _di_build_forecasts(
         tf = tf[tf["Month_Year"].astype(str) == str(month_value)]
 
     if tf.empty:
-        return "No matching row for the selected filters.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+        return "No matching row for the selected filters.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
 
     forecast_val = pd.to_numeric(tf[val_col], errors="coerce").dropna()
     if forecast_val.empty:
-        return "Selected forecast value is missing.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+        return "Selected forecast value is missing.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
     monthly_forecast = float(forecast_val.iloc[0])
+
+    orig_df, orig_msg = _di_load_original_data(group_value)
 
     if distribution_override is not None and not distribution_override.empty:
         distribution = distribution_override.copy()
         dist_msg = "Using edited distribution."
     else:
-        orig_df, orig_msg = _di_load_original_data(group_value)
         if orig_df.empty:
-            return orig_msg, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+            return orig_msg, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
         daily = (
             orig_df.groupby("date", as_index=False)["volume"]
             .sum()
@@ -5089,6 +5603,15 @@ def _di_build_forecasts(
     if not interval_tbl.empty:
         interval_tbl = interval_tbl.rename(columns={"interval": "Interval"})
 
+    analysis = _di_build_analysis(
+        orig_df,
+        forecast_month,
+        distribution,
+        monthly_forecast,
+        holidays_df,
+        interval_df,
+    )
+
     meta = {
         "monthly_forecast": monthly_forecast,
         "distribution_sum": float(distribution["Distribution_Pct"].sum()) if not distribution.empty else 0.0,
@@ -5096,7 +5619,9 @@ def _di_build_forecasts(
         "dist_msg": dist_msg,
     }
     status = f"Daily/interval forecast ready | monthly {monthly_forecast:,.0f}"
-    return status, distribution, daily_tbl, interval_tbl, meta
+    if analysis.get("error") and orig_msg:
+        status = f"{status} | {analysis['error']} {orig_msg}"
+    return status, distribution, daily_tbl, interval_tbl, meta, analysis
 
 
 @app.callback(
@@ -5107,8 +5632,6 @@ def _di_build_forecasts(
     Output("di-forecast-month", "value"),
     Output("di-forecast-dates-store", "data", allow_duplicate=True),
     Output("di-holidays-store", "data", allow_duplicate=True),
-    Output("di-transform-file", "options"),
-    Output("di-transform-file", "value"),
     Input("di-refresh-forecast-dates", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -5137,9 +5660,6 @@ def _di_load_forecast_dates_cb(_refresh):
     if holidays_msg:
         msg_full = f"{msg} | {holidays_msg}"
 
-    files_opts = _di_list_transform_files(_di_base_dir())
-    file_val = files_opts[0]["value"] if files_opts else None
-
     dates_json = json.dumps(payload) if payload else None
     holidays_json = holidays_df.to_json(date_format="iso", orient="split") if not holidays_df.empty else None
     return (
@@ -5150,9 +5670,60 @@ def _di_load_forecast_dates_cb(_refresh):
         month_val,
         dates_json,
         holidays_json,
-        files_opts,
-        file_val,
     )
+
+
+@app.callback(
+    Output("di-push-ba", "options"),
+    Output("di-push-ba", "value"),
+    Input("url-router", "pathname"),
+    prevent_initial_call=False,
+)
+def _di_load_push_ba(_path):
+    bas = _bas_from_headcount()
+    opts = [{"label": b, "value": b} for b in bas]
+    val = opts[0]["value"] if opts else None
+    return opts, val
+
+
+@app.callback(
+    Output("di-push-sba", "options"),
+    Output("di-push-sba", "value"),
+    Input("di-push-ba", "value"),
+    prevent_initial_call=True,
+)
+def _di_load_push_sba(ba):
+    sbas = _sbas_from_headcount(ba) if ba else []
+    opts = [{"label": s, "value": s} for s in sbas]
+    val = opts[0]["value"] if opts else None
+    return opts, val
+
+
+@app.callback(
+    Output("di-push-channel", "options"),
+    Output("di-push-channel", "value"),
+    Input("di-push-ba", "value"),
+    Input("di-push-sba", "value"),
+    prevent_initial_call=True,
+)
+def _di_load_push_channel(ba, sba):
+    channels = _lobs_for_ba_sba(ba, sba) if ba and sba else CHANNEL_LIST
+    opts = [{"label": c, "value": c} for c in channels]
+    val = opts[0]["value"] if opts else None
+    return opts, val
+
+
+@app.callback(
+    Output("di-push-site", "options"),
+    Output("di-push-site", "value"),
+    Input("di-push-ba", "value"),
+    prevent_initial_call=True,
+)
+def _di_load_push_site(ba):
+    sites = _sites_for_ba_location(ba, None) if ba else []
+    opts = [{"label": s, "value": s} for s in sites]
+    val = opts[0]["value"] if opts else None
+    return opts, val
 
 
 @app.callback(
@@ -5192,71 +5763,25 @@ def _di_update_month_options(year_val, store_json):
     Output("di-transform-month", "options"),
     Output("di-transform-month", "value"),
     Output("di-transform-store", "data", allow_duplicate=True),
-    Input("di-load-transform", "n_clicks"),
-    Input("di-load-transform-selected", "n_clicks"),
-    Input("di-upload-transform", "contents"),
-    Input("di-load-saved", "n_clicks"),
-    State("di-transform-file", "value"),
-    State("di-upload-transform", "filename"),
-    State("di-saved-run", "value"),
+    Input("di-saved-run", "value"),
     prevent_initial_call=True,
 )
-def _di_load_transform(n_load, n_selected, contents, n_saved, selected_path, filename, saved_run_id):
-    ctx = dash.callback_context
-    trig = ctx.triggered_id if ctx.triggered_id else None
-
-    def _ensure_month_year(df_in: pd.DataFrame) -> pd.DataFrame:
-        if df_in.empty:
-            return df_in
-        df_out = df_in.copy()
-        if "Month_Year" not in df_out.columns and "Year" in df_out.columns and "Month" in df_out.columns:
-            dt = pd.to_datetime(
-                df_out["Month"].astype(str) + " " + df_out["Year"].astype(str),
-                errors="coerce",
-            )
-            df_out["Month_Year"] = dt.dt.strftime("%b-%y")
-        return df_out
-
-    def _load_latest():
-        base_dir_txt = Path(__file__).resolve().parent.parent / "latest_forecast_base_dir.txt"
-        search_dir = Path(__file__).resolve().parent.parent / "exports"
-        if base_dir_txt.exists():
-            try:
-                txt = base_dir_txt.read_text().strip()
-                if txt:
-                    candidate = Path(txt)
-                    if candidate.exists():
-                        search_dir = candidate
-            except Exception:
-                pass
-        files = sorted(search_dir.glob("Monthly_Forecast_with_Adjustments_*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not files:
-            return pd.DataFrame(), "No transformed forecast files found."
-        try:
-            df_latest = pd.read_csv(files[0])
-            return df_latest, f"Loaded {files[0].name}."
-        except Exception as exc:
-            return pd.DataFrame(), f"Could not load latest file: {exc}"
-
-    if trig == "di-load-transform" and n_load:
-        df, msg = _load_latest()
-    elif trig == "di-load-transform-selected" and n_selected and selected_path:
-        try:
-            df = pd.read_csv(selected_path)
-            msg = f"Loaded {Path(selected_path).name}."
-        except Exception as exc:
-            df = pd.DataFrame()
-            msg = f"Could not load selected file: {exc}"
-    elif trig == "di-upload-transform" and contents and filename:
-        df, msg = _parse_upload(contents, filename)
-    elif trig == "di-load-saved" and n_saved:
-        df, msg = _load_saved_forecast(saved_run_id)
-    else:
+def _di_load_transform(saved_run_id):
+    if not saved_run_id:
         raise dash.exceptions.PreventUpdate
+
+    df, msg = _load_saved_forecast(saved_run_id)
+    if df is None or df.empty:
+        return msg, [], [], [], None, [], None, [], None, None
+    if "Month_Year" not in df.columns and "Year" in df.columns and "Month" in df.columns:
+        dt = pd.to_datetime(
+            df["Month"].astype(str) + " " + df["Year"].astype(str),
+            errors="coerce",
+        )
+        df = df.assign(Month_Year=dt.dt.strftime("%b-%y"))
 
     if df is None or df.empty:
         return msg, [], [], [], None, [], None, [], None, None
-    df = _ensure_month_year(df)
 
     def _opts(colname: str):
         uniq = sorted(pd.unique(df[colname].dropna()).tolist())
@@ -5328,6 +5853,7 @@ def _di_on_interval_upload(contents, filename):
     Output("di-interval-forecast-table", "columns"),
     Output("di-results-store", "data", allow_duplicate=True),
     Output("di-distribution-store", "data", allow_duplicate=True),
+    Output("di-analysis-block", "children"),
     Input("di-run-btn", "n_clicks"),
     State("di-transform-store", "data"),
     State("di-interval-store", "data"),
@@ -5353,11 +5879,11 @@ def _di_run_interval_forecast(
     if not n:
         raise dash.exceptions.PreventUpdate
     if not transform_json:
-        return ("Load a transformed forecast first.", [], [], "", [], [], [], [], None, None)
+        return ("Load a transformed forecast first.", [], [], "", [], [], [], [], None, None, [])
     try:
         tf = pd.read_json(io.StringIO(transform_json), orient="split")
     except Exception:
-        return ("Could not read transformed forecast.", [], [], "", [], [], [], [], None, None)
+        return ("Could not read transformed forecast.", [], [], "", [], [], [], [], None, None, [])
 
     if interval_json:
         try:
@@ -5381,18 +5907,26 @@ def _di_run_interval_forecast(
         if pd.notna(fallback):
             forecast_month_dt = fallback.replace(day=1)
     if forecast_month_dt is None:
-        return ("Select a forecast month.", [], [], "", [], [], [], [], None, None)
+        return ("Select a forecast month.", [], [], "", [], [], [], [], None, None, [])
 
-    status, dist_df, daily_tbl, interval_tbl, meta = _di_build_forecasts(
+    holidays_df = pd.DataFrame()
+    if holidays_json:
+        try:
+            holidays_df = pd.read_json(io.StringIO(holidays_json), orient="split")
+        except Exception:
+            holidays_df = pd.DataFrame()
+
+    status, dist_df, daily_tbl, interval_tbl, meta, analysis = _di_build_forecasts(
         tf,
         iv,
         forecast_month_dt,
         group_value,
         model_value,
         month_value,
+        holidays_df=holidays_df,
     )
     if dist_df.empty and daily_tbl.empty:
-        return (status, [], [], meta.get("dist_msg", ""), [], [], [], [], None, None)
+        return (status, [], [], meta.get("dist_msg", ""), [], [], [], [], None, None, _di_render_analysis(analysis))
 
     results = {
         "distribution": dist_df.to_dict("records"),
@@ -5408,26 +5942,21 @@ def _di_run_interval_forecast(
         },
     }
     dist_msg = meta.get("dist_msg", "")
-    if holidays_json:
-        try:
-            hdf = pd.read_json(io.StringIO(holidays_json), orient="split")
-        except Exception:
-            hdf = pd.DataFrame()
-        if not hdf.empty and "holiday_date" in hdf.columns and forecast_month_dt is not None:
-            hdf["holiday_date"] = pd.to_datetime(hdf["holiday_date"], errors="coerce")
-            month_mask = (
-                hdf["holiday_date"].dt.year == forecast_month_dt.year
-            ) & (hdf["holiday_date"].dt.month == forecast_month_dt.month)
-            month_holidays = hdf[month_mask]
-            if not month_holidays.empty:
-                names = []
-                for _, row in month_holidays.iterrows():
-                    name = row.get("holiday_name", "")
-                    dt = row.get("holiday_date")
-                    if pd.notna(dt):
-                        names.append(f"{dt.strftime('%d %b')}: {name}".strip())
-                if names:
-                    dist_msg = f"{dist_msg} | Holidays: {', '.join(names)}"
+    if not holidays_df.empty and "holiday_date" in holidays_df.columns and forecast_month_dt is not None:
+        holidays_df["holiday_date"] = pd.to_datetime(holidays_df["holiday_date"], errors="coerce")
+        month_mask = (holidays_df["holiday_date"].dt.year == forecast_month_dt.year) & (
+            holidays_df["holiday_date"].dt.month == forecast_month_dt.month
+        )
+        month_holidays = holidays_df[month_mask]
+        if not month_holidays.empty:
+            names = []
+            for _, row in month_holidays.iterrows():
+                name = row.get("holiday_name", "")
+                dt = row.get("holiday_date")
+                if pd.notna(dt):
+                    names.append(f"{dt.strftime('%d %b')}: {name}".strip())
+            if names:
+                dist_msg = f"{dist_msg} | Holidays: {', '.join(names)}"
     return (
         status,
         dist_df.to_dict("records"),
@@ -5439,6 +5968,7 @@ def _di_run_interval_forecast(
         _cols(interval_tbl),
         json.dumps(results),
         dist_df.to_json(date_format="iso", orient="split"),
+        _di_render_analysis(analysis),
     )
 
 
@@ -5452,6 +5982,7 @@ def _di_run_interval_forecast(
     Output("di-interval-forecast-table", "columns", allow_duplicate=True),
     Output("di-results-store", "data", allow_duplicate=True),
     Output("di-distribution-store", "data", allow_duplicate=True),
+    Output("di-analysis-block", "children", allow_duplicate=True),
     Input("di-apply-distribution-btn", "n_clicks"),
     State("di-distribution-table", "data"),
     State("di-transform-store", "data"),
@@ -5461,6 +5992,7 @@ def _di_run_interval_forecast(
     State("di-transform-month", "value"),
     State("di-forecast-year", "value"),
     State("di-forecast-month", "value"),
+    State("di-holidays-store", "data"),
     prevent_initial_call=True,
 )
 def _di_apply_distribution_edits(
@@ -5473,22 +6005,23 @@ def _di_apply_distribution_edits(
     month_value,
     forecast_year,
     forecast_month,
+    holidays_json,
 ):
     if not n:
         raise dash.exceptions.PreventUpdate
     if not transform_json:
-        return [], [], "Load a transformed forecast first.", [], [], [], [], None, None
+        return [], [], "Load a transformed forecast first.", [], [], [], [], None, None, []
     if not dist_data:
-        return [], [], "No distribution data to apply.", [], [], [], [], None, None
+        return [], [], "No distribution data to apply.", [], [], [], [], None, None, []
 
     try:
         tf = pd.read_json(io.StringIO(transform_json), orient="split")
     except Exception:
-        return [], [], "Could not read transformed forecast.", [], [], [], [], None, None
+        return [], [], "Could not read transformed forecast.", [], [], [], [], None, None, []
 
     dist_df = pd.DataFrame(dist_data)
     if dist_df.empty:
-        return [], [], "No distribution data to apply.", [], [], [], [], None, None
+        return [], [], "No distribution data to apply.", [], [], [], [], None, None, []
     if "Distribution_Pct" not in dist_df.columns:
         for col in dist_df.columns:
             if str(col).strip().lower() in {"distribution_pct", "distribution", "pct", "percent"}:
@@ -5514,7 +6047,14 @@ def _di_apply_distribution_edits(
         if not orig_df.empty and _pick_col(orig_df, ("interval", "time", "interval_start")):
             iv = orig_df.copy()
 
-    status, dist_norm, daily_tbl, interval_tbl, meta = _di_build_forecasts(
+    holidays_df = pd.DataFrame()
+    if holidays_json:
+        try:
+            holidays_df = pd.read_json(io.StringIO(holidays_json), orient="split")
+        except Exception:
+            holidays_df = pd.DataFrame()
+
+    status, dist_norm, daily_tbl, interval_tbl, meta, analysis = _di_build_forecasts(
         tf,
         iv,
         forecast_month_dt,
@@ -5522,9 +6062,10 @@ def _di_apply_distribution_edits(
         model_value,
         month_value,
         distribution_override=dist_df,
+        holidays_df=holidays_df,
     )
     if dist_norm.empty:
-        return [], [], status, [], [], [], [], None, None
+        return [], [], status, [], [], [], [], None, None, _di_render_analysis(analysis)
 
     results = {
         "distribution": dist_norm.to_dict("records"),
@@ -5549,6 +6090,7 @@ def _di_apply_distribution_edits(
         _cols(interval_tbl),
         json.dumps(results),
         dist_norm.to_json(date_format="iso", orient="split"),
+        _di_render_analysis(analysis),
     )
 
 
@@ -5654,6 +6196,79 @@ def _di_save_results(n, results_json):
         return f"Saved to {daily_path} and {interval_path}"
     except Exception as exc:
         return f"Save failed: {exc}"
+
+
+@app.callback(
+    Output("di-push-status", "children"),
+    Input("di-push-btn", "n_clicks"),
+    State("di-results-store", "data"),
+    State("di-push-ba", "value"),
+    State("di-push-sba", "value"),
+    State("di-push-channel", "value"),
+    State("di-push-site", "value"),
+    prevent_initial_call=True,
+)
+def _di_push_to_capacity_plan(n, results_json, ba, sba, channel, site):
+    if not n:
+        raise dash.exceptions.PreventUpdate
+    if not results_json:
+        return "Run daily/interval forecast first."
+    if not (ba and sba and channel):
+        return "Select BA, Sub BA, and Channel before pushing."
+
+    try:
+        payload = json.loads(results_json)
+    except Exception as exc:
+        return f"Could not parse forecast results: {exc}"
+
+    def _build_df(rows, prefer_cols):
+        df = pd.DataFrame(rows or [])
+        if df.empty:
+            return pd.DataFrame()
+        date_col = _pick_col(df, ("date", "Date"))
+        vol_col = _pick_col(df, prefer_cols)
+        if not date_col or not vol_col:
+            return pd.DataFrame()
+        out = df[[date_col, vol_col]].copy()
+        interval_col = _pick_col(df, ("interval", "Interval", "interval_start"))
+        if interval_col:
+            out["interval"] = df[interval_col]
+        out = out.rename(columns={date_col: "date", vol_col: "volume"})
+        out["volume"] = pd.to_numeric(out["volume"], errors="coerce")
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out = out.dropna(subset=["date", "volume"])
+        return out
+
+    ch_low = str(channel).strip().lower()
+    use_daily = ch_low in ("back office", "backoffice", "bo")
+    if use_daily:
+        forecast_df = _build_df(payload.get("daily"), ("daily_forecast", "forecast", "volume"))
+    else:
+        forecast_df = _build_df(payload.get("interval"), ("interval_forecast", "forecast", "volume"))
+
+    if forecast_df.empty:
+        return "No forecast rows found for the selected channel and granularity."
+
+    scope_key = _canon_scope(ba, sba, channel, site)
+    try:
+        user = current_user_fallback() or "unknown"
+    except Exception:
+        user = "unknown"
+    metadata = {
+        "source": "daily-interval",
+        "granularity": "daily" if use_daily else "interval",
+    }
+    ok, msg, run_id = cap_store.push_forecast_to_planning(
+        scope_key,
+        channel,
+        forecast_df,
+        created_by=user,
+        model_name="daily-interval",
+        metadata=metadata,
+    )
+    if ok and run_id:
+        return f"{msg} Run #{run_id}."
+    return msg
 
 
 @app.callback(
