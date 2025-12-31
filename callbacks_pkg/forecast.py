@@ -1357,7 +1357,28 @@ def _apply_transformations(df: pd.DataFrame) -> pd.DataFrame:
             cleaned = val.replace(",", "").replace("%", "").strip()
             if cleaned == "":
                 return None
-            val = cleaned
+            lowered = cleaned.lower()
+            if lowered in {"nan", "na", "none"}:
+                return None
+            multiplier = 1.0
+            if lowered.endswith("k"):
+                multiplier = 1_000.0
+                lowered = lowered[:-1]
+            elif lowered.endswith("m"):
+                multiplier = 1_000_000.0
+                lowered = lowered[:-1]
+            elif lowered.endswith("b"):
+                multiplier = 1_000_000_000.0
+                lowered = lowered[:-1]
+            try:
+                return float(lowered) * multiplier
+            except Exception:
+                return None
+        try:
+            if pd.isna(val):
+                return None
+        except Exception:
+            pass
         try:
             return float(val)
         except Exception:
