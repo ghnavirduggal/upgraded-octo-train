@@ -1053,39 +1053,11 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                         dbc.Card(
                             [
                                 html.H5("Load forecast data", className="mb-2"),
-                                dbc.Button(
-                                    "Load latest forecast file",
-                                    id="tp-load-latest",
-                                    color="secondary",
-                                    outline=True,
-                                    className="w-100 mb-1",
-                                ),
-                                dbc.Button(
-                                    "Use Phase 2 results",
-                                    id="tp-use-phase",
-                                    color="secondary",
-                                    outline=True,
-                                    className="w-100",
-                                ),
-                                dbc.Button(
-                                    "Refresh saved forecasts",
-                                    id="tp-refresh-saved",
-                                    color="secondary",
-                                    outline=True,
-                                    className="w-100 mt-2",
-                                ),
                                 dcc.Dropdown(
                                     id="tp-saved-run",
                                     options=[],
                                     placeholder="Select saved forecast",
                                     className="mt-2",
-                                ),
-                                dbc.Button(
-                                    "Load saved forecast",
-                                    id="tp-load-saved",
-                                    color="secondary",
-                                    outline=True,
-                                    className="w-100 mt-1",
                                 ),
                                 html.Div(id="tp-saved-status", className="small text-muted mt-2"),
                                 html.Div(id="tp-load-status", className="small text-muted mt-2"),
@@ -1265,40 +1237,13 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                 ),
                                 html.Hr(),
                                 html.H5("Use transformed forecast", className="mb-2"),
-                                dbc.ButtonGroup(
-                                    [
-                                        dbc.Button("Load latest saved file", id="di-load-transform", color="secondary", outline=True),
-                                        dbc.Button("Load selected file", id="di-load-transform-selected", color="secondary", outline=True),
-                                        dcc.Upload(
-                                            id="di-upload-transform",
-                                            children=html.Div(["Upload CSV"], className="px-2"),
-                                            multiple=False,
-                                            accept=".csv",
-                                            className="border border-secondary rounded p-2 bg-light",
-                                        ),
-                                    ],
-                                    className="mb-2",
-                                ),
-                                dbc.ButtonGroup(
-                                    [
-                                        dbc.Button("Refresh saved forecasts", id="di-refresh-saved", color="secondary", outline=True),
-                                        dbc.Button("Load saved forecast", id="di-load-saved", color="secondary", outline=True),
-                                    ],
-                                    className="mb-2",
-                                ),
                                 dcc.Dropdown(
                                     id="di-saved-run",
                                     options=[],
-                                    placeholder="Select saved forecast",
+                                    placeholder="Select transformed forecast",
                                     className="mb-2",
                                 ),
                                 html.Div(id="di-saved-status", className="small text-muted mb-2"),
-                                dcc.Dropdown(
-                                    id="di-transform-file",
-                                    options=[],
-                                    placeholder="Select transformed forecast file",
-                                    className="mb-2",
-                                ),
                                 html.Div(id="di-transform-msg", className="small text-muted mb-2"),
                                 dbc.Row(
                                     [
@@ -1356,6 +1301,31 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     className="mt-2",
                                 ),
                                 html.Div(id="di-save-status", className="small text-muted mt-2"),
+                                html.Hr(),
+                                html.H5("Push to capacity plan", className="mb-2"),
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            dcc.Dropdown(id="di-push-ba", options=[], placeholder="Select BA"),
+                                            md=12,
+                                        ),
+                                        dbc.Col(
+                                            dcc.Dropdown(id="di-push-sba", options=[], placeholder="Select Sub BA"),
+                                            md=12,
+                                        ),
+                                        dbc.Col(
+                                            dcc.Dropdown(id="di-push-channel", options=[], placeholder="Select Channel"),
+                                            md=12,
+                                        ),
+                                        dbc.Col(
+                                            dcc.Dropdown(id="di-push-site", options=[], placeholder="Select Site"),
+                                            md=12,
+                                        ),
+                                    ],
+                                    className="g-2 mb-2",
+                                ),
+                                dbc.Button("Push forecast to plan", id="di-push-btn", color="primary"),
+                                html.Div(id="di-push-status", className="small text-muted mt-2"),
                                 html.Div(
                                     [
                                         html.Div("Tips:", className="fw-semibold mb-1"),
@@ -1440,6 +1410,8 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
                                     style_cell={"fontSize": 12},
                                 ),
+                                html.Hr(),
+                                html.Div(id="di-analysis-block"),
                             ],
                             body=True,
                         ),
