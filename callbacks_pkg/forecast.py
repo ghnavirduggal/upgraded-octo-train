@@ -1350,15 +1350,27 @@ _TRANSFORMATION_COLS = [
 
 
 def _apply_transformations(df: pd.DataFrame) -> pd.DataFrame:
-    def calculate_sequential(row: pd.Series, field: str, base_col: str):
+    def _coerce_num(val):
+        if val is None:
+            return None
+        if isinstance(val, str):
+            cleaned = val.replace(",", "").replace("%", "").strip()
+            if cleaned == "":
+                return None
+            val = cleaned
         try:
-            value = row.get(field, "")
-            if pd.notna(value) and str(value).strip() != "":
-                adj_percent = float(str(value).replace("%", "").strip())
-                return round(row[base_col] * (1 + adj_percent / 100), 0)
+            return float(val)
         except Exception:
-            pass
-        return round(row[base_col], 0)
+            return None
+
+    def calculate_sequential(row: pd.Series, field: str, base_col: str):
+        adj_percent = _coerce_num(row.get(field, None))
+        base_val = _coerce_num(row.get(base_col, None))
+        if base_val is None:
+            return np.nan
+        if adj_percent is None:
+            return round(base_val, 0)
+        return round(base_val * (1 + adj_percent / 100), 0)
 
     def apply_sequential_adjustments(df_in: pd.DataFrame) -> pd.DataFrame:
         df_copy = df_in.copy()
@@ -1374,6 +1386,11 @@ def _apply_transformations(df: pd.DataFrame) -> pd.DataFrame:
             "Marketing Campaign 3",
         ]
         prev_col = "Base_Forecast_for_Forecast_Group"
+        if prev_col in df_copy.columns:
+            df_copy[prev_col] = df_copy[prev_col].apply(_coerce_num)
+        for field in adjustment_fields:
+            if field in df_copy.columns:
+                df_copy[field] = df_copy[field].apply(_coerce_num)
         for field in adjustment_fields:
             new_col = f"Forecast_{field}"
             df_copy[new_col] = df_copy.apply(lambda row: calculate_sequential(row, field, prev_col), axis=1)
@@ -4134,7 +4151,7 @@ def _load_saved_forecast(run_id: Any) -> tuple[pd.DataFrame, str]:
     Output("tp-saved-run", "value"),
     Output("tp-saved-status", "children"),
     Input("url-router", "pathname"),
-    prevent_initial_call=True,
+    prevent_initial_call=False,
 )
 def _tp_refresh_saved_runs(pathname):
     if not pathname or not pathname.startswith("/forecast/transformation-projects"):
@@ -4147,7 +4164,7 @@ def _tp_refresh_saved_runs(pathname):
     Output("di-saved-run", "value"),
     Output("di-saved-status", "children"),
     Input("url-router", "pathname"),
-    prevent_initial_call=True,
+    prevent_initial_call=False,
 )
 def _di_refresh_saved_runs(pathname):
     if not pathname or not pathname.startswith("/forecast/daily-interval"):
@@ -4262,7 +4279,17 @@ def _tp_apply_selection(n, raw_json, group, model, year):
             lambda r: f"{str(r['Month'])[:3]}-{str(r['Year'])[-2:]}", axis=1
         )
 
-    filtered = filtered.sort_values(["Year", "Month_Year"]) if "Year" in filtered.columns else filtered
+    if "Month_Year" in filtered.columns:
+        month_dt = pd.to_datetime(filtered["Month_Year"], format="%b-%y", errors="coerce")
+        if month_dt.isna().all():
+            month_dt = pd.to_datetime(filtered["Month_Year"], errors="coerce")
+        if month_dt.notna().any():
+            filtered = filtered.assign(_month_year_dt=month_dt).sort_values("_month_year_dt")
+        elif "Year" in filtered.columns and "Month" in filtered.columns:
+            filtered = _sort_year_month(filtered)
+        filtered = filtered.drop(columns=["_month_year_dt"], errors="ignore")
+    elif "Year" in filtered.columns and "Month" in filtered.columns:
+        filtered = _sort_year_month(filtered)
 
     forecast_notice = ""
     if "Month_Year" in filtered.columns:
@@ -4403,6 +4430,12 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
                 final_forecast_values = processed.set_index("Month_Year")["Forecast_Marketing Campaign 3"]
                 t.loc[len(t)] = ["Final Forecast"] + final_forecast_values.tolist()
             transposed = t
+    if not transposed.empty:
+        if "Category" in transposed.columns:
+            month_cols = [c for c in transposed.columns if c != "Category"]
+            ordered_months = _sort_month_year_columns(month_cols)
+            ordered = ["Category"] + ordered_months + [c for c in month_cols if c not in ordered_months]
+            transposed = transposed[ordered]
 
     # final forecast table
     final_cols = ["Month_Year", "Forecast_Marketing Campaign 3"]
@@ -4416,6 +4449,13 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
     final_tbl = processed[final_cols].copy()
     if "Forecast_Marketing Campaign 3" in final_tbl.columns:
         final_tbl = final_tbl.rename(columns={"Forecast_Marketing Campaign 3": "Final_Forecast"})
+    if "Month_Year" in final_tbl.columns:
+        month_dt = pd.to_datetime(final_tbl["Month_Year"], format="%b-%y", errors="coerce")
+        if month_dt.isna().all():
+            month_dt = pd.to_datetime(final_tbl["Month_Year"], errors="coerce")
+        if month_dt.notna().any():
+            final_tbl = final_tbl.assign(_month_year_dt=month_dt).sort_values("_month_year_dt")
+            final_tbl = final_tbl.drop(columns=["_month_year_dt"], errors="ignore")
 
     # summary
     summary = {}
