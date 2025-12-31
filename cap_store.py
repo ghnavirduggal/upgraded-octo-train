@@ -1384,8 +1384,8 @@ def push_forecast_to_planning(
 ) -> tuple[bool, str, Optional[int]]:
     """
     Persist forecast to audit table and push to planning timeseries for the channel.
-    Expects forecast_df to contain 'date' and 'volume' columns; 'aht_sec' or 'sut_sec'
-    will be saved when present for supported channels.
+    Expects forecast_df to contain 'date' and 'volume' columns; optional 'interval',
+    'aht_sec', or 'sut_sec' will be saved when present for supported channels.
     """
     sk = _canon_scope_key(scope_key)
     if not isinstance(forecast_df, pd.DataFrame) or forecast_df.empty:
@@ -1411,12 +1411,24 @@ def push_forecast_to_planning(
     elif ch_low in ("chat", "messaging", "messageus", "message us"):
         vol_kind = "chat_forecast_volume"
         aht_kind = "chat_forecast_aht"
+    elif ch_low in ("outbound", "ob", "out bound"):
+        vol_kind = "ob_forecast_calls"
+        aht_kind = None
 
     if not vol_kind:
         return False, f"Unsupported channel '{channel}' for planning push.", None
 
     try:
-        save_timeseries(vol_kind, sk, df[[c_date, c_vol]].rename(columns={c_date: "date", c_vol: "volume"}))
+        extra_cols = []
+        for cand in ("interval", "interval_start"):
+            if cand in low_cols:
+                extra_cols.append(low_cols[cand])
+                break
+        save_timeseries(
+            vol_kind,
+            sk,
+            df[[c_date, c_vol] + extra_cols].rename(columns={c_date: "date", c_vol: "volume"}),
+        )
         if aht_kind:
             target_aht_col = "aht_sec" if "aht" in aht_kind else "sut_sec"
             for aht_col in ("aht_sec", "sut_sec", "aht", "sut"):
@@ -1424,7 +1436,7 @@ def push_forecast_to_planning(
                     save_timeseries(
                         aht_kind,
                         sk,
-                        df[[c_date, low_cols[aht_col]]].rename(
+                        df[[c_date, low_cols[aht_col]] + extra_cols].rename(
                             columns={c_date: "date", low_cols[aht_col]: target_aht_col}
                         ),
                     )
