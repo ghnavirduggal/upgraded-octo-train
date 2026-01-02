@@ -5633,13 +5633,25 @@ def _di_build_forecasts(
         if "Year" in tf.columns:
             tf["Year"] = pd.to_numeric(tf["Year"], errors="coerce")
         if "Month" in tf.columns:
-            tf["_month_num"] = pd.to_datetime(tf["Month"], errors="coerce").dt.month
-            tf["_month_num"] = tf["_month_num"].fillna(pd.to_numeric(tf["Month"], errors="coerce"))
+            month_series = tf["Month"].astype(str).str.strip()
+            month_num_series = pd.to_numeric(month_series, errors="coerce")
+            if month_num_series.isna().any():
+                month_num_series = month_num_series.fillna(month_series.apply(_month_name_to_num))
+            tf["_month_num"] = month_num_series
             tf = tf[tf["_month_num"] == month_num]
         if "Year" in tf.columns:
             tf = tf[tf["Year"] == year_val]
         if "Month_Year" in tf.columns:
-            tf["_month_year_dt"] = pd.to_datetime(tf["Month_Year"], errors="coerce")
+            month_year_series = tf["Month_Year"].astype(str).str.strip()
+            month_year_dt = pd.to_datetime(month_year_series, format="%b-%y", errors="coerce")
+            month_year_dt = month_year_dt.fillna(
+                pd.to_datetime(month_year_series, format="%b-%Y", errors="coerce")
+            )
+            if month_year_dt.isna().any():
+                month_year_dt = month_year_dt.fillna(
+                    month_year_series.apply(lambda v: pd.to_datetime(v, errors="coerce"))
+                )
+            tf["_month_year_dt"] = month_year_dt
             tf = tf[(tf["_month_year_dt"].dt.year == year_val) & (tf["_month_year_dt"].dt.month == month_num)]
     elif month_value and "Month_Year" in tf.columns:
         tf = tf[tf["Month_Year"].astype(str) == str(month_value)]
