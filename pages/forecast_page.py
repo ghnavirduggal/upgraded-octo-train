@@ -1273,6 +1273,10 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                 ),
                                 html.Hr(),
                                 html.H5("Interval history (last 3 months)", className="mb-2"),
+                                html.Div(
+                                    "Uses the Volume Summary upload if available; upload only to override.",
+                                    className="small text-muted mb-2",
+                                ),
                                 dcc.Upload(
                                     id="di-upload",
                                     children=html.Div(["Drag & drop or ", html.Strong("select interval CSV/XLSX")]),
@@ -1298,31 +1302,37 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     className="mt-2",
                                 ),
                                 html.Div(id="di-save-status", className="small text-muted mt-2"),
-                                html.Hr(),
-                                html.H5("Push to capacity plan", className="mb-2"),
-                                dbc.Row(
+                                html.Div(
                                     [
-                                        dbc.Col(
-                                            dcc.Dropdown(id="di-push-ba", options=[], placeholder="Select BA"),
-                                            md=12,
+                                        html.Hr(),
+                                        html.H5("Push to capacity plan", className="mb-2"),
+                                        dbc.Row(
+                                            [
+                                                dbc.Col(
+                                                    dcc.Dropdown(id="di-push-ba", options=[], placeholder="Select BA"),
+                                                    md=12,
+                                                ),
+                                                dbc.Col(
+                                                    dcc.Dropdown(id="di-push-sba", options=[], placeholder="Select Sub BA"),
+                                                    md=12,
+                                                ),
+                                                dbc.Col(
+                                                    dcc.Dropdown(id="di-push-channel", options=[], placeholder="Select Channel"),
+                                                    md=12,
+                                                ),
+                                                dbc.Col(
+                                                    dcc.Dropdown(id="di-push-site", options=[], placeholder="Select Site"),
+                                                    md=12,
+                                                ),
+                                            ],
+                                            className="g-2 mb-2",
                                         ),
-                                        dbc.Col(
-                                            dcc.Dropdown(id="di-push-sba", options=[], placeholder="Select Sub BA"),
-                                            md=12,
-                                        ),
-                                        dbc.Col(
-                                            dcc.Dropdown(id="di-push-channel", options=[], placeholder="Select Channel"),
-                                            md=12,
-                                        ),
-                                        dbc.Col(
-                                            dcc.Dropdown(id="di-push-site", options=[], placeholder="Select Site"),
-                                            md=12,
-                                        ),
+                                        dbc.Button("Push forecast to plan", id="di-push-btn", color="primary"),
+                                        html.Div(id="di-push-status", className="small text-muted mt-2"),
                                     ],
-                                    className="g-2 mb-2",
+                                    id="di-push-section",
+                                    style={"display": "none"},
                                 ),
-                                dbc.Button("Push forecast to plan", id="di-push-btn", color="primary"),
-                                html.Div(id="di-push-status", className="small text-muted mt-2"),
                                 html.Div(
                                     [
                                         html.Div("Tips:", className="fw-semibold mb-1"),
