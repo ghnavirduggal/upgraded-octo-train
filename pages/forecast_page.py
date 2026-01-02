@@ -234,6 +234,7 @@ def forecast_shared_stores(storage_type: str = "memory"):
         dcc.Store(id="di-interval-store", storage_type=storage_type),
         dcc.Store(id="di-results-store", storage_type=storage_type),
         dcc.Store(id="di-distribution-store", storage_type=storage_type),
+        dcc.Store(id="di-staged-run-id", storage_type=storage_type),
     ]
 
 def page_forecast_section(slug: str, validation_only: bool = False):
