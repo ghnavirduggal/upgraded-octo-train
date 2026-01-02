@@ -4864,7 +4864,19 @@ def _di_normalize_original_data(df: pd.DataFrame, group_value: Optional[str]) ->
     return d
 
 
-def _di_load_original_data(group_value: Optional[str]) -> tuple[pd.DataFrame, str]:
+def _di_load_original_data(
+    group_value: Optional[str],
+    fallback_json: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    if fallback_json:
+        try:
+            df = pd.read_json(io.StringIO(fallback_json), orient="split")
+        except Exception:
+            df = pd.DataFrame()
+        df = _di_normalize_original_data(df, group_value)
+        if not df.empty:
+            return df, "Loaded original data from Volume Summary upload."
+
     base_dir = _di_base_dir()
     repo_root = _di_repo_root()
     candidates = [
@@ -5599,6 +5611,7 @@ def _di_build_forecasts(
     month_value: Optional[str],
     distribution_override: Optional[pd.DataFrame] = None,
     holidays_df: Optional[pd.DataFrame] = None,
+    original_data_json: Optional[str] = None,
 ) -> tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict, dict]:
     if transform_df.empty:
         return "Load a transformed forecast first.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
@@ -5664,7 +5677,7 @@ def _di_build_forecasts(
         return "Selected forecast value is missing.", pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
     monthly_forecast = float(forecast_val.iloc[0])
 
-    orig_df, orig_msg = _di_load_original_data(group_value)
+    orig_df, orig_msg = _di_load_original_data(group_value, original_data_json)
 
     if distribution_override is not None and not distribution_override.empty:
         distribution = distribution_override.copy()
@@ -5973,6 +5986,7 @@ def _di_on_interval_upload(contents, filename):
     State("di-forecast-year", "value"),
     State("di-forecast-month", "value"),
     State("di-holidays-store", "data"),
+    State("vs-data-store", "data"),
     prevent_initial_call=True,
 )
 def _di_run_interval_forecast(
@@ -5985,6 +5999,7 @@ def _di_run_interval_forecast(
     forecast_year,
     forecast_month,
     holidays_json,
+    vs_data_json,
 ):
     if not n:
         raise dash.exceptions.PreventUpdate
@@ -6004,7 +6019,7 @@ def _di_run_interval_forecast(
         iv = pd.DataFrame()
 
     if iv.empty:
-        orig_df, _ = _di_load_original_data(group_value)
+        orig_df, _ = _di_load_original_data(group_value, vs_data_json)
         if not orig_df.empty and _pick_col(orig_df, ("interval", "time", "interval_start")):
             iv = orig_df.copy()
 
@@ -6034,6 +6049,7 @@ def _di_run_interval_forecast(
         model_value,
         month_value,
         holidays_df=holidays_df,
+        original_data_json=vs_data_json,
     )
     if dist_df.empty and daily_tbl.empty:
         return (status, [], [], meta.get("dist_msg", ""), [], [], [], [], None, None, _di_render_analysis(analysis))
@@ -6103,6 +6119,7 @@ def _di_run_interval_forecast(
     State("di-forecast-year", "value"),
     State("di-forecast-month", "value"),
     State("di-holidays-store", "data"),
+    State("vs-data-store", "data"),
     prevent_initial_call=True,
 )
 def _di_apply_distribution_edits(
@@ -6116,6 +6133,7 @@ def _di_apply_distribution_edits(
     forecast_year,
     forecast_month,
     holidays_json,
+    vs_data_json,
 ):
     if not n:
         raise dash.exceptions.PreventUpdate
@@ -6153,7 +6171,7 @@ def _di_apply_distribution_edits(
         iv = pd.DataFrame()
 
     if iv.empty:
-        orig_df, _ = _di_load_original_data(group_value)
+        orig_df, _ = _di_load_original_data(group_value, vs_data_json)
         if not orig_df.empty and _pick_col(orig_df, ("interval", "time", "interval_start")):
             iv = orig_df.copy()
 
@@ -6173,6 +6191,7 @@ def _di_apply_distribution_edits(
         month_value,
         distribution_override=dist_df,
         holidays_df=holidays_df,
+        original_data_json=vs_data_json,
     )
     if dist_norm.empty:
         return [], [], status, [], [], [], [], None, None, _di_render_analysis(analysis)
@@ -6248,6 +6267,7 @@ def _di_download_interval(n, results_json):
 
 @app.callback(
     Output("di-save-status", "children"),
+    Output("di-push-section", "style"),
     Input("di-save-btn", "n_clicks"),
     State("di-results-store", "data"),
     prevent_initial_call=True,
@@ -6255,12 +6275,14 @@ def _di_download_interval(n, results_json):
 def _di_save_results(n, results_json):
     if not n:
         raise dash.exceptions.PreventUpdate
+    hidden_style = {"display": "none"}
+    shown_style = {"display": "block"}
     if not results_json:
-        return "Run interval forecast first."
+        return "Run interval forecast first.", hidden_style
     try:
         payload = json.loads(results_json)
     except Exception as exc:
-        return f"Could not parse results: {exc}"
+        return f"Could not parse results: {exc}", hidden_style
     daily = pd.DataFrame(payload.get("daily", []))
     interval = pd.DataFrame(payload.get("interval", []))
     meta = payload.get("meta", {})
@@ -6303,9 +6325,9 @@ def _di_save_results(n, results_json):
             (output_dir / "latest_forecast_path.txt").write_text(str(daily_path))
         except Exception:
             pass
-        return f"Saved to {daily_path} and {interval_path}"
+        return f"Saved to {daily_path} and {interval_path}", shown_style
     except Exception as exc:
-        return f"Save failed: {exc}"
+        return f"Save failed: {exc}", hidden_style
 
 
 @app.callback(
