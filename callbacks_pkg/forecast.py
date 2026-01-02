@@ -5468,7 +5468,8 @@ def _di_build_analysis(
     matching_df = first_days[first_days["Month_Year"].isin(matching_months)].copy() if not first_days.empty else pd.DataFrame()
 
     seq_table = _di_sequential_mapping_table(orig, matching_months, "Volume%")
-    table1 = _di_single_month_table(orig, matching_months, "Volume%", holidays_df or pd.DataFrame())
+    holidays_safe = holidays_df if isinstance(holidays_df, pd.DataFrame) and not holidays_df.empty else pd.DataFrame()
+    table1 = _di_single_month_table(orig, matching_months, "Volume%", holidays_safe)
 
     available_months = _di_sort_month_str(orig["Month_Year"].dropna().unique().tolist())
     last_available = available_months[-1] if available_months else None
@@ -5477,10 +5478,10 @@ def _di_build_analysis(
     one_year_str = one_year_ago.strftime("%b-%y")
     two_year_str = two_years_ago.strftime("%b-%y")
 
-    table2 = _di_single_month_table(orig, [two_year_str], "Volume%", holidays_df or pd.DataFrame()) if two_year_str in available_months else pd.DataFrame()
+    table2 = _di_single_month_table(orig, [two_year_str], "Volume%", holidays_safe) if two_year_str in available_months else pd.DataFrame()
     table3_month = one_year_str if one_year_str in available_months else last_available
-    table3 = _di_single_month_table(orig, [table3_month], "Volume%", holidays_df or pd.DataFrame()) if table3_month else pd.DataFrame()
-    table4 = _di_single_month_table(orig, [last_available], "Volume%", holidays_df or pd.DataFrame()) if last_available else pd.DataFrame()
+    table3 = _di_single_month_table(orig, [table3_month], "Volume%", holidays_safe) if table3_month else pd.DataFrame()
+    table4 = _di_single_month_table(orig, [last_available], "Volume%", holidays_safe) if last_available else pd.DataFrame()
 
     holiday_info = ""
     if holidays_df is not None and not holidays_df.empty:
@@ -5490,8 +5491,8 @@ def _di_build_analysis(
             if names:
                 holiday_info = f"Holidays in {forecast_month.strftime('%B %Y')}: {names}"
 
-    year1_impact = _di_impact_analysis_table(orig, one_year_ago.year, one_year_ago.month, holidays_df or pd.DataFrame(), "Volume%")
-    year2_impact = _di_impact_analysis_table(orig, two_years_ago.year, two_years_ago.month, holidays_df or pd.DataFrame(), "Volume%")
+    year1_impact = _di_impact_analysis_table(orig, one_year_ago.year, one_year_ago.month, holidays_safe, "Volume%")
+    year2_impact = _di_impact_analysis_table(orig, two_years_ago.year, two_years_ago.month, holidays_safe, "Volume%")
 
     base_values = []
     if not table1.empty:
@@ -5946,23 +5947,6 @@ def _di_load_transform(saved_run_id):
         month_val,
         df.to_json(date_format="iso", orient="split"),
     )
-
-
-@app.callback(
-    Output("di-upload-msg", "children"),
-    Output("di-preview", "data"),
-    Output("di-preview", "columns"),
-    Output("di-interval-store", "data", allow_duplicate=True),
-    Input("di-upload", "contents"),
-    State("di-upload", "filename"),
-    prevent_initial_call=True,
-)
-def _di_on_interval_upload(contents, filename):
-    if not contents or not filename:
-        raise dash.exceptions.PreventUpdate
-    df, msg = _parse_upload(contents, filename)
-    preview = df.head(200)
-    return msg, preview.to_dict("records"), _cols(preview), df.to_json(date_format="iso", orient="split")
 
 
 @app.callback(
