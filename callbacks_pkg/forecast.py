@@ -5480,6 +5480,9 @@ def _json_safe_records(df: pd.DataFrame) -> list[dict]:
         return []
     out = df.copy()
     for col in out.columns:
+        if pd.api.types.is_period_dtype(out[col]):
+            out[col] = out[col].astype(str)
+            continue
         if pd.api.types.is_datetime64_any_dtype(out[col]):
             out[col] = out[col].dt.strftime("%Y-%m-%d")
             continue
@@ -5489,6 +5492,8 @@ def _json_safe_records(df: pd.DataFrame) -> list[dict]:
 
 
 def _json_safe_value(val: Any):
+    if isinstance(val, pd.Period):
+        return str(val)
     if isinstance(val, (pd.Timestamp, dt.datetime, dt.date)):
         return val.isoformat()
     if isinstance(val, np.datetime64):
@@ -5602,13 +5607,17 @@ def _di_render_analysis(analysis: dict):
             return html.Div()
         df_use = df.copy()
         for col in df_use.columns:
-            if pd.api.types.is_datetime64_any_dtype(df_use[col]):
+            if pd.api.types.is_period_dtype(df_use[col]):
+                df_use[col] = df_use[col].astype(str)
+            elif pd.api.types.is_datetime64_any_dtype(df_use[col]):
                 df_use[col] = df_use[col].dt.strftime("%Y-%m-%d")
+            elif df_use[col].dtype == object:
+                df_use[col] = df_use[col].apply(_json_safe_value)
         return html.Div(
             [
                 html.Div(title, className="di-section-title"),
                 dash_table.DataTable(
-                    data=df_use.to_dict("records"),
+                    data=_json_safe_records(df_use),
                     columns=_cols(df_use),
                     page_size=8,
                     page_action="none",
@@ -5822,11 +5831,26 @@ def _di_build_forecasts(
     Output("di-forecast-dates-store", "data", allow_duplicate=True),
     Output("di-holidays-store", "data", allow_duplicate=True),
     Input("di-refresh-forecast-dates", "n_clicks"),
+    State("vs-holiday-store", "data"),
     prevent_initial_call=True,
 )
-def _di_load_forecast_dates_cb(_refresh):
+def _di_load_forecast_dates_cb(_refresh, vs_holiday_store):
     dates, msg = _di_load_forecast_dates()
     holidays_df, holidays_msg = _di_load_holidays()
+    if (holidays_df is None or holidays_df.empty) and vs_holiday_store:
+        try:
+            h_payload = json.loads(vs_holiday_store) if isinstance(vs_holiday_store, str) else vs_holiday_store
+            mapping = h_payload.get("mapping", {}) if isinstance(h_payload, dict) else {}
+            if mapping:
+                holidays_df = pd.DataFrame(
+                    {
+                        "holiday_date": pd.to_datetime(list(mapping.keys()), errors="coerce"),
+                        "holiday_name": list(mapping.values()),
+                    }
+                ).dropna(subset=["holiday_date"])
+                holidays_msg = "Loaded holidays from Volume Summary upload."
+        except Exception:
+            pass
 
     years_opts = []
     year_val = None
