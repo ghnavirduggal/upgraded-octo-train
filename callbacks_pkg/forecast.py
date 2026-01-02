@@ -5,6 +5,7 @@ import json
 import re
 import logging
 import calendar
+import datetime as dt
 from typing import Any, Optional, Tuple
 from prophet import Prophet
 import dash
@@ -5446,7 +5447,56 @@ def _di_interval_section_tables(interval_df: pd.DataFrame) -> tuple[pd.DataFrame
     for wd in [c for c in section2.columns if c != "interval"]:
         fig.add_trace(go.Scatter(x=section2["interval"], y=section2[wd], mode="lines+markers", name=wd))
     fig.update_layout(title="Average volume share by interval and weekday", xaxis_title="Interval", yaxis_title="Avg %")
-    return section1, section2, fig
+    section1_disp = section1.copy()
+    for col in section1_disp.columns:
+        if col != "interval":
+            section1_disp[col] = (
+                pd.to_numeric(section1_disp[col], errors="coerce")
+                .round(2)
+                .apply(lambda v: f"{v:.2f}%" if pd.notna(v) else "")
+            )
+    section2_disp = section2.copy()
+    for col in section2_disp.columns:
+        if col != "interval":
+            section2_disp[col] = (
+                pd.to_numeric(section2_disp[col], errors="coerce")
+                .round(2)
+                .apply(lambda v: f"{v:.2f}%" if pd.notna(v) else "")
+            )
+    return section1_disp, section2_disp, fig
+
+
+def _interval_summary_text(interval_tbl: pd.DataFrame) -> str:
+    if interval_tbl is None or interval_tbl.empty:
+        return ""
+    total = pd.to_numeric(interval_tbl.get("Interval_Forecast"), errors="coerce").sum()
+    if not np.isfinite(total):
+        return ""
+    return f"Total Interval Forecast: {total:,.0f}"
+
+
+def _json_safe_records(df: pd.DataFrame) -> list[dict]:
+    if df is None or df.empty:
+        return []
+    out = df.copy()
+    for col in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[col]):
+            out[col] = out[col].dt.strftime("%Y-%m-%d")
+            continue
+        if out[col].dtype == object:
+            out[col] = out[col].apply(_json_safe_value)
+    return out.to_dict("records")
+
+
+def _json_safe_value(val: Any):
+    if isinstance(val, (pd.Timestamp, dt.datetime, dt.date)):
+        return val.isoformat()
+    if isinstance(val, np.datetime64):
+        try:
+            return pd.to_datetime(val).isoformat()
+        except Exception:
+            return val
+    return val
 
 
 def _di_build_analysis(
@@ -5463,6 +5513,7 @@ def _di_build_analysis(
         analysis["error"] = "Original data not available for analysis."
         return analysis
 
+    weekday_name = forecast_month.strftime("%A")
     first_days, matching_months = _di_matching_months_table(orig, forecast_month)
     matching_months = matching_months[-3:] if matching_months else []
     matching_df = first_days[first_days["Month_Year"].isin(matching_months)].copy() if not first_days.empty else pd.DataFrame()
@@ -5518,16 +5569,16 @@ def _di_build_analysis(
     interval_section1, interval_section2, interval_fig = _di_interval_section_tables(interval_df)
 
     analysis["tables"] = [
-        ("Original Data (filtered)", orig.head(200)),
-        ("Months where 1st day matches forecast month", matching_df),
-        ("Daily distribution (sequential mapping)", seq_table),
-        ("Table 1: Historical months starting on same weekday", table1),
+        ("Original Data as per Selected Forecast Group", orig.head(200)),
+        (f"Months where 1st day is {weekday_name}", matching_df),
+        ("Daily Distribution - Last 3 Historical Months Falling on Same Weekday", seq_table),
+        (f"Table 1: Historical Months Starting on {weekday_name}", table1),
         (f"Table 2: {two_year_str} (2 Years Ago)", table2),
         (f"Table 3: {table3_month or 'N/A'}", table3),
-        (f"Table 4: {last_available or 'N/A'} (Latest)", table4),
-        ("Holiday Impact Analysis (Year-1)", year1_impact),
-        ("Holiday Impact Analysis (Year-2 Reference)", year2_impact),
-        ("Forecast Rows (Base/Adjusted/Final)", forecast_rows),
+        (f"Table 4: {last_available or 'N/A'} (Latest Data Available)", table4),
+        (f"Holiday Impact Analysis for {one_year_str}", year1_impact),
+        (f"Year-2 Analysis: {two_year_str} (Reference Only)", year2_impact),
+        ("Forecast Rows", forecast_rows),
         ("Avg Distribution for Forecast Month", forecast_vertical),
         ("Daily Distribution Pattern (Last 3 Months)", interval_section1),
         ("Average Daily Distribution Pattern by Weekday", interval_section2),
@@ -5555,7 +5606,7 @@ def _di_render_analysis(analysis: dict):
                 df_use[col] = df_use[col].dt.strftime("%Y-%m-%d")
         return html.Div(
             [
-                html.H6(title, className="mt-3 mb-2"),
+                html.Div(title, className="di-section-title"),
                 dash_table.DataTable(
                     data=df_use.to_dict("records"),
                     columns=_cols(df_use),
@@ -5565,7 +5616,8 @@ def _di_render_analysis(analysis: dict):
                     style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
                     style_cell={"fontSize": 12, "padding": "6px 8px"},
                 ),
-            ]
+            ],
+            className="di-section",
         )
 
     blocks = []
@@ -5574,30 +5626,43 @@ def _di_render_analysis(analysis: dict):
             blocks.append(
                 html.Div(
                     f"Monthly forecast value: {float(analysis['monthly_forecast']):,.0f}",
-                    className="small text-muted",
+                    className="di-banner di-banner--info",
                 )
             )
         except Exception:
             pass
     if analysis.get("holiday_info"):
-        blocks.append(html.Div(analysis["holiday_info"], className="small text-muted mt-2"))
+        blocks.append(html.Div(analysis["holiday_info"], className="di-banner di-banner--info mt-2"))
+    interval_heading_added = False
     for title, df in analysis.get("tables", []):
+        if not interval_heading_added and title.startswith("Daily Distribution Pattern"):
+            blocks.append(html.Div("Interval Forecasting", className="di-section-title"))
+            interval_heading_added = True
         blocks.append(_table_block(title, df))
 
     if analysis.get("monthly_tables"):
-        blocks.append(html.H6("Monthly Distribution View", className="mt-3 mb-2"))
+        blocks.append(
+            html.Div(
+                "Monthly Distribution View - Last 3 Historical Months Falling on Same Weekday & More",
+                className="di-section-title",
+            )
+        )
         for title, df in analysis["monthly_tables"]:
             blocks.append(_table_block(title, df))
 
     for title, fig in analysis.get("charts", []):
         if fig is None:
             continue
+        if not interval_heading_added and title == "Average Volume Share by Interval and Weekday":
+            blocks.append(html.Div("Interval Forecasting", className="di-section-title"))
+            interval_heading_added = True
         blocks.append(
             html.Div(
                 [
-                    html.H6(title, className="mt-3 mb-2"),
+                    html.Div(title, className="di-section-title"),
                     dcc.Graph(figure=fig, config={"displayModeBar": False}),
-                ]
+                ],
+                className="di-section",
             )
         )
     return blocks
@@ -5958,6 +6023,7 @@ def _di_load_transform(saved_run_id):
     Output("di-daily-table", "columns"),
     Output("di-interval-forecast-table", "data"),
     Output("di-interval-forecast-table", "columns"),
+    Output("di-interval-summary", "children"),
     Output("di-results-store", "data", allow_duplicate=True),
     Output("di-distribution-store", "data", allow_duplicate=True),
     Output("di-analysis-block", "children"),
@@ -5988,11 +6054,11 @@ def _di_run_interval_forecast(
     if not n:
         raise dash.exceptions.PreventUpdate
     if not transform_json:
-        return ("Load a transformed forecast first.", [], [], "", [], [], [], [], None, None, [])
+        return ("Load a transformed forecast first.", [], [], "", [], [], [], [], "", None, None, [])
     try:
         tf = pd.read_json(io.StringIO(transform_json), orient="split")
     except Exception:
-        return ("Could not read transformed forecast.", [], [], "", [], [], [], [], None, None, [])
+        return ("Could not read transformed forecast.", [], [], "", [], [], [], [], "", None, None, [])
 
     if interval_json:
         try:
@@ -6016,7 +6082,7 @@ def _di_run_interval_forecast(
         if pd.notna(fallback):
             forecast_month_dt = fallback.replace(day=1)
     if forecast_month_dt is None:
-        return ("Select a forecast month.", [], [], "", [], [], [], [], None, None, [])
+        return ("Select a forecast month.", [], [], "", [], [], [], [], "", None, None, [])
 
     holidays_df = pd.DataFrame()
     if holidays_json:
@@ -6036,12 +6102,15 @@ def _di_run_interval_forecast(
         original_data_json=vs_data_json,
     )
     if dist_df.empty and daily_tbl.empty:
-        return (status, [], [], meta.get("dist_msg", ""), [], [], [], [], None, None, _di_render_analysis(analysis))
+        return (status, [], [], meta.get("dist_msg", ""), [], [], [], [], "", None, None, _di_render_analysis(analysis))
 
+    dist_records = _json_safe_records(dist_df)
+    daily_records = _json_safe_records(daily_tbl)
+    interval_records = _json_safe_records(interval_tbl)
     results = {
-        "distribution": dist_df.to_dict("records"),
-        "daily": daily_tbl.to_dict("records"),
-        "interval": interval_tbl.to_dict("records"),
+        "distribution": dist_records,
+        "daily": daily_records,
+        "interval": interval_records,
         "meta": {
             "group": group_value,
             "model": model_value,
@@ -6067,15 +6136,17 @@ def _di_run_interval_forecast(
                     names.append(f"{dt.strftime('%d %b')}: {name}".strip())
             if names:
                 dist_msg = f"{dist_msg} | Holidays: {', '.join(names)}"
+    interval_summary = _interval_summary_text(interval_tbl)
     return (
         status,
-        dist_df.to_dict("records"),
+        dist_records,
         _cols(dist_df),
         dist_msg,
-        daily_tbl.to_dict("records"),
+        daily_records,
         _cols(daily_tbl),
-        interval_tbl.to_dict("records"),
+        interval_records,
         _cols(interval_tbl),
+        interval_summary,
         json.dumps(results),
         dist_df.to_json(date_format="iso", orient="split"),
         _di_render_analysis(analysis),
@@ -6090,6 +6161,7 @@ def _di_run_interval_forecast(
     Output("di-daily-table", "columns", allow_duplicate=True),
     Output("di-interval-forecast-table", "data", allow_duplicate=True),
     Output("di-interval-forecast-table", "columns", allow_duplicate=True),
+    Output("di-interval-summary", "children", allow_duplicate=True),
     Output("di-results-store", "data", allow_duplicate=True),
     Output("di-distribution-store", "data", allow_duplicate=True),
     Output("di-analysis-block", "children", allow_duplicate=True),
@@ -6122,18 +6194,18 @@ def _di_apply_distribution_edits(
     if not n:
         raise dash.exceptions.PreventUpdate
     if not transform_json:
-        return [], [], "Load a transformed forecast first.", [], [], [], [], None, None, []
+        return [], [], "Load a transformed forecast first.", [], [], [], [], "", None, None, []
     if not dist_data:
-        return [], [], "No distribution data to apply.", [], [], [], [], None, None, []
+        return [], [], "No distribution data to apply.", [], [], [], [], "", None, None, []
 
     try:
         tf = pd.read_json(io.StringIO(transform_json), orient="split")
     except Exception:
-        return [], [], "Could not read transformed forecast.", [], [], [], [], None, None, []
+        return [], [], "Could not read transformed forecast.", [], [], [], [], "", None, None, []
 
     dist_df = pd.DataFrame(dist_data)
     if dist_df.empty:
-        return [], [], "No distribution data to apply.", [], [], [], [], None, None, []
+        return [], [], "No distribution data to apply.", [], [], [], [], "", None, None, []
     if "Distribution_Pct" not in dist_df.columns:
         for col in dist_df.columns:
             if str(col).strip().lower() in {"distribution_pct", "distribution", "pct", "percent"}:
@@ -6178,12 +6250,15 @@ def _di_apply_distribution_edits(
         original_data_json=vs_data_json,
     )
     if dist_norm.empty:
-        return [], [], status, [], [], [], [], None, None, _di_render_analysis(analysis)
+        return [], [], status, [], [], [], [], "", None, None, _di_render_analysis(analysis)
 
+    dist_records = _json_safe_records(dist_norm)
+    daily_records = _json_safe_records(daily_tbl)
+    interval_records = _json_safe_records(interval_tbl)
     results = {
-        "distribution": dist_norm.to_dict("records"),
-        "daily": daily_tbl.to_dict("records"),
-        "interval": interval_tbl.to_dict("records"),
+        "distribution": dist_records,
+        "daily": daily_records,
+        "interval": interval_records,
         "meta": {
             "group": group_value,
             "model": model_value,
@@ -6193,14 +6268,16 @@ def _di_apply_distribution_edits(
             "interval_msg": meta.get("interval_msg"),
         },
     }
+    interval_summary = _interval_summary_text(interval_tbl)
     return (
-        dist_norm.to_dict("records"),
+        dist_records,
         _cols(dist_norm),
         meta.get("dist_msg", status),
-        daily_tbl.to_dict("records"),
+        daily_records,
         _cols(daily_tbl),
-        interval_tbl.to_dict("records"),
+        interval_records,
         _cols(interval_tbl),
+        interval_summary,
         json.dumps(results),
         dist_norm.to_json(date_format="iso", orient="split"),
         _di_render_analysis(analysis),
@@ -6231,11 +6308,12 @@ def _di_download_daily(n, results_json):
 @app.callback(
     Output("di-download-interval", "data"),
     Input("di-download-interval-btn", "n_clicks"),
+    Input("di-download-interval-btn-2", "n_clicks"),
     State("di-results-store", "data"),
     prevent_initial_call=True,
 )
-def _di_download_interval(n, results_json):
-    if not n:
+def _di_download_interval(n, n_alt, results_json):
+    if not (n or n_alt):
         raise dash.exceptions.PreventUpdate
     if not results_json:
         return dash.no_update
