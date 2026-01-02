@@ -1180,11 +1180,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                         _table("tp-final-forecast-table", page_size=8),
                                         html.Hr(),
                                         html.H5("Summary", className="mb-2"),
-                                        html.Pre(
-                                            id="tp-summary-json",
-                                            className="small text-muted",
-                                            style={"whiteSpace": "pre-wrap"},
-                                        ),
+                                        _table("tp-summary-table", page_size=6),
                                     ],
                                 ),
                             ],
