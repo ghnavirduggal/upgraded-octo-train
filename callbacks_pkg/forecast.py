@@ -4312,6 +4312,12 @@ def _tp_apply_selection(n, raw_json, group, model, year):
     elif "Year" in filtered.columns and "Month" in filtered.columns:
         filtered = _sort_year_month(filtered)
 
+    if "Base_Forecast_for_Forecast_Group" not in filtered.columns:
+        for cand in ("Base_Forecast_Category", "Final_Forecast", "Forecast"):
+            if cand in filtered.columns:
+                filtered["Base_Forecast_for_Forecast_Group"] = filtered[cand]
+                break
+
     forecast_notice = ""
     if "Month_Year" in filtered.columns:
         try:
@@ -4371,7 +4377,8 @@ def _tp_apply_selection(n, raw_json, group, model, year):
     Output("tp-transposed-table", "columns"),
     Output("tp-final-forecast-table", "data"),
     Output("tp-final-forecast-table", "columns"),
-    Output("tp-summary-json", "children"),
+    Output("tp-summary-table", "data"),
+    Output("tp-summary-table", "columns"),
     Input("tp-apply-transform", "n_clicks"),
     State("tp-transform-table", "data"),
     State("tp-filtered-store", "data"),
@@ -4381,20 +4388,37 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
     if not n:
         raise dash.exceptions.PreventUpdate
     if not edited_rows or not filtered_json:
-        return "Nothing to transform yet.", None, [], [], [], [], ""
+        return "Nothing to transform yet.", None, [], [], [], [], [], []
     try:
         base_filtered = pd.read_json(io.StringIO(filtered_json), orient="split")
     except Exception:
         base_filtered = pd.DataFrame()
-    edited_df = pd.DataFrame(edited_rows)
-    full_df = base_filtered.copy()
+    edited_df = pd.DataFrame(edited_rows).reset_index(drop=True)
+    full_df = base_filtered.reset_index(drop=True).copy()
     for col in edited_df.columns:
         if col in full_df.columns:
             # keep base cols as-is
             continue
-        full_df[col] = edited_df[col]
+        full_df[col] = edited_df[col].values
+
+    if "Base_Forecast_for_Forecast_Group" not in full_df.columns:
+        for cand in ("Base_Forecast_Category", "Final_Forecast", "Forecast"):
+            if cand in full_df.columns:
+                full_df["Base_Forecast_for_Forecast_Group"] = full_df[cand]
+                break
 
     processed = _apply_transformations(full_df)
+    final_value_col = None
+    for cand in (
+        "Final_Forecast_Post_Transformations",
+        "Final_Forecast",
+        "Forecast_Marketing Campaign 3",
+        "Forecast_Marketing Campaign 2",
+        "Forecast_Marketing Campaign 1",
+    ):
+        if cand in processed.columns:
+            final_value_col = cand
+            break
 
     # transposed view
     transpose_cols = [
@@ -4447,8 +4471,8 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
         if "Month_Year" in transposed.columns:
             t = transposed.set_index("Month_Year").transpose().reset_index()
             t.rename(columns={"index": "Category"}, inplace=True)
-            if "Forecast_Marketing Campaign 3" in processed.columns:
-                final_forecast_values = processed.set_index("Month_Year")["Forecast_Marketing Campaign 3"]
+            if final_value_col:
+                final_forecast_values = processed.set_index("Month_Year")[final_value_col]
                 t.loc[len(t)] = ["Final Forecast"] + final_forecast_values.tolist()
             transposed = t
     if not transposed.empty:
@@ -4459,7 +4483,9 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
             transposed = transposed[ordered]
 
     # final forecast table
-    final_cols = ["Month_Year", "Forecast_Marketing Campaign 3"]
+    final_cols = ["Month_Year"]
+    if final_value_col:
+        final_cols.append(final_value_col)
     if "forecast_group" in processed.columns:
         final_cols.insert(0, "forecast_group")
     if "Model" in processed.columns:
@@ -4468,8 +4494,8 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
         final_cols.insert(-1, "Year")
     final_cols = [c for c in final_cols if c in processed.columns]
     final_tbl = processed[final_cols].copy()
-    if "Forecast_Marketing Campaign 3" in final_tbl.columns:
-        final_tbl = final_tbl.rename(columns={"Forecast_Marketing Campaign 3": "Final_Forecast"})
+    if final_value_col and final_value_col != "Final_Forecast" and final_value_col in final_tbl.columns:
+        final_tbl = final_tbl.rename(columns={final_value_col: "Final_Forecast"})
     if "Month_Year" in final_tbl.columns:
         month_dt = pd.to_datetime(final_tbl["Month_Year"], format="%b-%y", errors="coerce")
         if month_dt.isna().all():
@@ -4506,6 +4532,14 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
     except Exception:
         summary = {}
 
+    summary_rows = []
+    for key, val in (summary or {}).items():
+        val = _json_safe(val)
+        if isinstance(val, (list, tuple)):
+            val = ", ".join(str(v) for v in val)
+        summary_rows.append({"Metric": key, "Value": val})
+    summary_df = pd.DataFrame(summary_rows)
+
     return (
         "Transformations applied.",
         processed.to_json(date_format="iso", orient="split"),
@@ -4513,7 +4547,8 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
         _cols(transposed),
         final_tbl.to_dict("records"),
         _cols(final_tbl),
-        json.dumps(_json_safe(summary), indent=2),
+        summary_df.to_dict("records"),
+        _cols(summary_df),
     )
 
 
@@ -6346,6 +6381,8 @@ def _di_push_to_capacity_plan(n, results_json, ba, sba, channel, site):
     Output("tp-transposed-table", "columns", allow_duplicate=True),
     Output("tp-final-forecast-table", "data", allow_duplicate=True),
     Output("tp-final-forecast-table", "columns", allow_duplicate=True),
+    Output("tp-summary-table", "data", allow_duplicate=True),
+    Output("tp-summary-table", "columns", allow_duplicate=True),
     Output("tp-selection-status", "is_open", allow_duplicate=True),
     Output("tp-selection-status", "children", allow_duplicate=True),
     Output("tp-transform-status", "children", allow_duplicate=True),
@@ -6356,4 +6393,23 @@ def _tp_reset(n):
     if not n:
         raise dash.exceptions.PreventUpdate
     empty_cols = []
-    return (None, None, None, [], empty_cols, [], empty_cols, [], empty_cols, [], empty_cols, [], empty_cols, False, "", "")
+    return (
+        None,
+        None,
+        None,
+        [],
+        empty_cols,
+        [],
+        empty_cols,
+        [],
+        empty_cols,
+        [],
+        empty_cols,
+        [],
+        empty_cols,
+        [],
+        empty_cols,
+        False,
+        "",
+        "",
+    )
