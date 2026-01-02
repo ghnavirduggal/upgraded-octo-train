@@ -5012,6 +5012,13 @@ def _di_sort_month_str(values: list[str]) -> list[str]:
     return [v for v in ordered if isinstance(v, str)]
 
 
+def _sort_month_names(values: list[str]) -> list[str]:
+    def _key(val: str) -> tuple[int, str]:
+        num = _month_name_to_num(val)
+        return (num if num is not None else 99, str(val))
+    return sorted([v for v in values if isinstance(v, str)], key=_key)
+
+
 def _di_matching_months_table(d: pd.DataFrame, target_month: pd.Timestamp) -> tuple[pd.DataFrame, list[str]]:
     if d is None or d.empty:
         return pd.DataFrame(), []
@@ -5864,7 +5871,8 @@ def _di_load_forecast_dates_cb(_refresh, vs_holiday_store):
         months_by_year = {}
         for y in years:
             months = sorted(dates[dates.dt.year == y].dt.month.unique().tolist())
-            months_by_year[int(y)] = [calendar.month_name[m] for m in months if m]
+            month_names = [calendar.month_name[m] for m in months if m]
+            months_by_year[int(y)] = _sort_month_names(month_names)
         payload = {"months_by_year": months_by_year}
         month_opts = [{"label": m, "value": m} for m in months_by_year.get(year_val, [])]
         month_val = month_opts[0]["value"] if month_opts else None
@@ -5959,10 +5967,72 @@ def _di_update_month_options(year_val, store_json):
     except Exception:
         year_int = None
     months = months_by_year.get(str(year_val)) or (months_by_year.get(year_int) if year_int is not None else None)
-    months = months or []
+    months = _sort_month_names(months or [])
     month_opts = [{"label": m, "value": m} for m in months]
     month_val = month_opts[0]["value"] if month_opts else None
     return month_opts, month_val
+
+
+@app.callback(
+    Output("di-transform-month", "value", allow_duplicate=True),
+    Input("di-forecast-year", "value"),
+    Input("di-forecast-month", "value"),
+    State("di-transform-month", "options"),
+    State("di-transform-month", "value"),
+    prevent_initial_call=True,
+)
+def _di_sync_transform_month(forecast_year, forecast_month, options, current_value):
+    if not forecast_year or not forecast_month or not options:
+        return no_update
+    try:
+        year_val = int(forecast_year)
+    except Exception:
+        return no_update
+    month_num = _month_name_to_num(str(forecast_month))
+    if not month_num:
+        try:
+            month_num = pd.to_datetime(str(forecast_month), errors="coerce").month
+        except Exception:
+            month_num = None
+    if not month_num:
+        return no_update
+
+    def _parse_month_year(value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        for fmt in ("%b-%y", "%b-%Y", "%b %Y", "%B %Y", "%Y-%m", "%Y/%m"):
+            dt_val = pd.to_datetime(text, format=fmt, errors="coerce")
+            if pd.notna(dt_val):
+                return dt_val
+        dt_val = pd.to_datetime(text, errors="coerce")
+        if pd.notna(dt_val):
+            return dt_val
+        return None
+
+    for opt in options:
+        if isinstance(opt, dict):
+            val = opt.get("value")
+        else:
+            val = opt
+        dt_val = _parse_month_year(val)
+        if dt_val is not None and dt_val.year == year_val and dt_val.month == month_num:
+            return no_update if val == current_value else val
+
+    for opt in options:
+        if isinstance(opt, dict):
+            label = opt.get("label")
+            val = opt.get("value")
+        else:
+            label = opt
+            val = opt
+        dt_val = _parse_month_year(label)
+        if dt_val is not None and dt_val.year == year_val and dt_val.month == month_num:
+            return no_update if val == current_value else val
+
+    return no_update
 
 
 @app.callback(
