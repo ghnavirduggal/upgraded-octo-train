@@ -1271,20 +1271,6 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     ],
                                     className="g-2 mb-2",
                                 ),
-                                html.Hr(),
-                                html.H5("Interval history (last 3 months)", className="mb-2"),
-                                html.Div(
-                                    "Uses the Volume Summary upload if available; upload only to override.",
-                                    className="small text-muted mb-2",
-                                ),
-                                dcc.Upload(
-                                    id="di-upload",
-                                    children=html.Div(["Drag & drop or ", html.Strong("select interval CSV/XLSX")]),
-                                    multiple=False,
-                                    accept=".csv,.xls,.xlsx",
-                                    className="border border-secondary rounded p-3 mb-2 bg-light",
-                                ),
-                                html.Div(id="di-upload-msg", className="small text-muted"),
                                 dbc.ButtonGroup(
                                     [
                                         dbc.Button("Build daily + interval", id="di-run-btn", color="primary"),
@@ -1359,18 +1345,6 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                 html.H5("Preview (first 200 rows)", className="mb-2"),
                                 dash_table.DataTable(
                                     id="di-transform-preview",
-                                    data=[],
-                                    columns=[],
-                                    page_size=6,
-                                    page_action="none",
-                                    fixed_rows={"headers": True},
-                                    style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
-                                    style_cell={"fontSize": 12},
-                                ),
-                                html.Hr(),
-                                html.H5("Interval history preview (first 200)", className="mb-2"),
-                                dash_table.DataTable(
-                                    id="di-preview",
                                     data=[],
                                     columns=[],
                                     page_size=6,
