@@ -166,6 +166,66 @@ h5{ color:#3a5166 !important; }
 h6{ margin-left:10px; }
 
 /* =========================
+   Daily Interval (forecast)
+========================= */
+.di-banner{
+  padding:10px 12px;
+  border-radius:10px;
+  border:1px solid transparent;
+  font-size:0.85rem;
+  line-height:1.4;
+}
+.di-banner:empty{ display:none; }
+.di-banner--success{
+  background:#e7f5ec;
+  border-color:#b7e2c4;
+  color:#2f5d34;
+}
+.di-banner--info{
+  background:#e8f0ff;
+  border-color:#c9d8ff;
+  color:#2c4b8d;
+}
+.di-banner--warn{
+  background:#fff3cd;
+  border-color:#f0d38a;
+  color:#6b5314;
+}
+.di-section-title{
+  font-weight:700;
+  font-size:1rem;
+  color:#2f3a4f;
+  margin:0 0 6px 0;
+}
+.di-section-sub{
+  font-size:0.8rem;
+  color:#6b7280;
+}
+.di-section{
+  background:#fff;
+  border:1px solid #e9eef5;
+  border-radius:12px;
+  padding:12px;
+}
+.di-analysis-block > div{ margin-bottom:12px; }
+.di-field-label{
+  font-size:0.8rem;
+  color:#6b7280;
+  margin-bottom:4px;
+}
+.di-radio .form-check{
+  margin-right:12px;
+}
+.di-radio .form-check-input{
+  margin-top:0.35rem;
+}
+.di-radio{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px 12px;
+}
+
+/* =========================
    DataTable polish
 ========================= */
 .dash-table-container .row{ margin:0; }
@@ -717,13 +777,27 @@ h6 {
   width: 212px;
 }
 
-#tp-load-latest {
-  width: 300px !important;
-  margin-bottom: 10px !important;
-  margin-right: 10px !important;
+#vs-upload {
+  min-width: 700px !important;
+  cursor: pointer;
 }
 
-#tp-use-phase {
-  width: 300px !important;
-  margin-bottom: 10px !important;
+.user-select-none.svg-container, .main-svg {
+  width: 100% !important;
+  height: 450px !important;
+}
+
+.groups, .legend {
+  right: 0 !important;
+}
+
+#di-download-interval-btn, #tp-save-btn {
+  border-left: none !important;
+  border-bottom-left-radius: 0 !important;
+  border-top-left-radius: 0 !important;
+}
+
+#tp-download-full-btn {
+  border-bottom-right-radius: 0 !important;
+  border-top-right-radius: 0 !important;
 }
