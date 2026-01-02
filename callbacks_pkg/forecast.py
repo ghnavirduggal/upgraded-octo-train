@@ -88,6 +88,7 @@ _FORECAST_STORE_IDS = [
     "di-interval-store",
     "di-results-store",
     "di-distribution-store",
+    "di-staged-run-id",
 ]
 
 
@@ -4185,12 +4186,23 @@ def _tp_refresh_saved_runs(pathname):
     Output("di-saved-run", "value"),
     Output("di-saved-status", "children"),
     Input("url-router", "pathname"),
+    State("di-staged-run-id", "data"),
     prevent_initial_call=False,
 )
-def _di_refresh_saved_runs(pathname):
+def _di_refresh_saved_runs(pathname, staged_run_id):
     if not pathname or not pathname.startswith("/forecast/daily-interval"):
         raise dash.exceptions.PreventUpdate
-    return _saved_forecast_options(model_name="transformation-projects")
+    options, value, status = _saved_forecast_options(model_name="transformation-projects")
+    if staged_run_id is not None:
+        option_values = {opt.get("value") for opt in options}
+        if staged_run_id in option_values:
+            value = staged_run_id
+        else:
+            label = f"#{staged_run_id} | transformation-projects"
+            options.insert(0, {"label": label, "value": staged_run_id})
+            value = staged_run_id
+        status = f"Loaded transformed forecast #{staged_run_id}."
+    return options, value, status
 
 
 @app.callback(
@@ -4554,9 +4566,7 @@ def _tp_apply_transform(n, edited_rows, filtered_json):
 
 @app.callback(
     Output("tp-save-status", "children", allow_duplicate=True),
-    Output("di-saved-run", "options", allow_duplicate=True),
-    Output("di-saved-run", "value", allow_duplicate=True),
-    Output("di-saved-status", "children", allow_duplicate=True),
+    Output("di-staged-run-id", "data", allow_duplicate=True),
     Input("tp-complete", "n_clicks"),
     State("tp-final-store", "data"),
     prevent_initial_call=True,
@@ -4565,13 +4575,13 @@ def _tp_save_and_stage_di(n_clicks, final_json):
     if not n_clicks:
         raise dash.exceptions.PreventUpdate
     if not final_json:
-        return "Run transformations first.", no_update, no_update, no_update
+        return "Run transformations first.", no_update
     try:
         df = pd.read_json(io.StringIO(final_json), orient="split")
     except Exception as exc:
-        return f"Could not read transformed forecast: {exc}", no_update, no_update, no_update
+        return f"Could not read transformed forecast: {exc}", no_update
     if df.empty:
-        return "Transformed forecast is empty.", no_update, no_update, no_update
+        return "Transformed forecast is empty.", no_update
 
     if "Forecast_Marketing Campaign 3" in df.columns and "Final_Forecast_Post_Transformations" not in df.columns:
         df["Final_Forecast_Post_Transformations"] = df["Forecast_Marketing Campaign 3"]
@@ -4596,17 +4606,9 @@ def _tp_save_and_stage_di(n_clicks, final_json):
             pushed_to_planning=False,
         )
     except Exception as exc:
-        return f"DB save failed: {exc}", no_update, no_update, no_update
-
-    options, _default_val, _status = _saved_forecast_options(model_name="transformation-projects")
-    option_values = {opt.get("value") for opt in options}
-    if run_id not in option_values:
-        label = f"#{run_id} | transformation-projects | {user}"
-        options.insert(0, {"label": label, "value": run_id})
-
+        return f"DB save failed: {exc}", no_update
     tp_status = f"Saved transformed forecast #{run_id} by {user}."
-    di_status = f"Loaded transformed forecast #{run_id}."
-    return tp_status, options, run_id, di_status
+    return tp_status, run_id
 
 
 @app.callback(
