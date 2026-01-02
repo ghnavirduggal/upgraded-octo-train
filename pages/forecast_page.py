@@ -1210,24 +1210,36 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     ],
                                     className="mb-2",
                                 ),
-                                html.Div(id="di-forecast-dates-msg", className="small text-muted mb-2"),
+                                html.Div(id="di-forecast-dates-msg", className="di-banner di-banner--success mb-2"),
                                 dbc.Row(
                                     [
                                         dbc.Col(
-                                            dcc.Dropdown(
-                                                id="di-forecast-year",
-                                                options=[],
-                                                placeholder="Select year",
-                                            ),
-                                            md=12,
+                                            [
+                                                html.Div("Select Year", className="di-field-label"),
+                                                dbc.RadioItems(
+                                                    id="di-forecast-year",
+                                                    options=[],
+                                                    inline=True,
+                                                    className="di-radio",
+                                                    inputClassName="me-1",
+                                                    labelClassName="me-3",
+                                                ),
+                                            ],
+                                            md=6,
                                         ),
                                         dbc.Col(
-                                            dcc.Dropdown(
-                                                id="di-forecast-month",
-                                                options=[],
-                                                placeholder="Select month",
-                                            ),
-                                            md=12,
+                                            [
+                                                html.Div("Select Month", className="di-field-label"),
+                                                dbc.RadioItems(
+                                                    id="di-forecast-month",
+                                                    options=[],
+                                                    inline=True,
+                                                    className="di-radio",
+                                                    inputClassName="me-1",
+                                                    labelClassName="me-3",
+                                                ),
+                                            ],
+                                            md=6,
                                         ),
                                     ],
                                     className="g-2 mb-2",
@@ -1240,8 +1252,8 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     placeholder="Select transformed forecast",
                                     className="mb-2",
                                 ),
-                                html.Div(id="di-saved-status", className="small text-muted mb-2"),
-                                html.Div(id="di-transform-msg", className="small text-muted mb-2"),
+                                html.Div(id="di-saved-status", className="di-banner di-banner--success mb-2"),
+                                html.Div(id="di-transform-msg", className="di-banner di-banner--info mb-2"),
                                 dbc.Row(
                                     [
                                         dbc.Col(
@@ -1280,14 +1292,14 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     ],
                                     className="mt-2",
                                 ),
-                                html.Div(id="di-run-status", className="small fw-semibold text-primary mt-2"),
+                                html.Div(id="di-run-status", className="di-banner di-banner--info mt-2"),
                                 dbc.ButtonGroup(
                                     [
                                         dbc.Button("Save to disk", id="di-save-btn", color="secondary", outline=True),
                                     ],
                                     className="mt-2",
                                 ),
-                                html.Div(id="di-save-status", className="small text-muted mt-2"),
+                                html.Div(id="di-save-status", className="di-banner di-banner--info mt-2"),
                                 html.Div(
                                     [
                                         html.Hr(),
@@ -1314,7 +1326,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                             className="g-2 mb-2",
                                         ),
                                         dbc.Button("Push forecast to plan", id="di-push-btn", color="primary"),
-                                        html.Div(id="di-push-status", className="small text-muted mt-2"),
+                                        html.Div(id="di-push-status", className="di-banner di-banner--info mt-2"),
                                     ],
                                     id="di-push-section",
                                     style={"display": "none"},
@@ -1342,7 +1354,8 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                     dbc.Col(
                         dbc.Card(
                             [
-                                html.H5("Preview (first 200 rows)", className="mb-2"),
+                                html.Div("Transformed Forecast Loaded", className="di-section-title"),
+                                html.Div("Preview (first 200 rows)", className="di-section-sub mb-2"),
                                 dash_table.DataTable(
                                     id="di-transform-preview",
                                     data=[],
@@ -1354,7 +1367,9 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     style_cell={"fontSize": 12},
                                 ),
                                 html.Hr(),
-                                html.H5("Daily distribution (editable)", className="mb-2"),
+                                html.Div(id="di-analysis-block", className="di-analysis-block"),
+                                html.Hr(),
+                                html.Div("Edit Forecast Distribution", className="di-section-title"),
                                 dash_table.DataTable(
                                     id="di-distribution-table",
                                     data=[],
@@ -1366,9 +1381,9 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
                                     style_cell={"fontSize": 12},
                                 ),
-                                html.Div(id="di-distribution-msg", className="small text-muted mt-2"),
+                                html.Div(id="di-distribution-msg", className="di-banner di-banner--info mt-2"),
                                 html.Hr(),
-                                html.H5("Daily forecast", className="mb-2"),
+                                html.Div("Final Daily Forecast", className="di-section-title"),
                                 dash_table.DataTable(
                                     id="di-daily-table",
                                     data=[],
@@ -1380,7 +1395,7 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     style_cell={"fontSize": 12},
                                 ),
                                 html.Hr(),
-                                html.H5("Interval forecast", className="mb-2"),
+                                html.Div("Final Interval Forecast", className="di-section-title"),
                                 dash_table.DataTable(
                                     id="di-interval-forecast-table",
                                     data=[],
@@ -1391,8 +1406,14 @@ def page_forecast_section(slug: str, validation_only: bool = False):
                                     style_table={"overflowX": "auto", "overflowY": "auto", "maxHeight": "360px"},
                                     style_cell={"fontSize": 12},
                                 ),
-                                html.Hr(),
-                                html.Div(id="di-analysis-block"),
+                                html.Div(id="di-interval-summary", className="di-banner di-banner--info mt-2"),
+                                dbc.Button(
+                                    "Download Final Interval Forecast",
+                                    id="di-download-interval-btn-2",
+                                    color="secondary",
+                                    outline=True,
+                                    className="mt-2",
+                                ),
                             ],
                             body=True,
                         ),
